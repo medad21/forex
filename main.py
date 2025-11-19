@@ -1,9 +1,8 @@
+from flask import Flask, request, jsonify, render_template
 import requests
 import numpy as np
-from flask import Flask, request, jsonify, render_template
-import os
 
-app = Flask(__name__, template_folder="templates")
+app = Flask(__name__)
 
 API_KEY = "df521019db9f44899bfb172fdce6b454"
 BASE_URL = "https://api.twelvedata.com/time_series"
@@ -92,7 +91,7 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/analyze")
+@app.route("/analyze", methods=["GET"])
 def analyze():
     symbol = request.args.get("symbol", "EUR/USD")
     interval = request.args.get("interval", "15min")
@@ -101,5 +100,8 @@ def analyze():
     if prices is None:
         return jsonify({"error": "cannot fetch data"})
 
-    return jsonify(trading_signal(prices))
+    result = trading_signal(prices)
+    return jsonify(result)
 
+# ‌توجه:
+# اینجا عمداً app.run نداریم چون Railway از Gunicorn استفاده می‌کند.
