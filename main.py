@@ -1,16 +1,13 @@
-﻿import requests
+import requests
 import numpy as np
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
-API_KEY = "df521019db9f44899bfb172fdce6b454"   # اینجا API را بگذار
+API_KEY = "YOUR_API_KEY_HERE"
 BASE_URL = "https://api.twelvedata.com/time_series"
 
 
-# -------------------------------
-# دریافت داده کندل
-# -------------------------------
 def get_candles(symbol, interval="15min", length=200):
     params = {
         "symbol": symbol,
@@ -29,19 +26,14 @@ def get_candles(symbol, interval="15min", length=200):
     return closes
 
 
-# -------------------------------
-# تحلیل تکنیکال
-# -------------------------------
 def compute_rsi(prices, period=14):
     deltas = np.diff(prices)
     gain = np.where(deltas > 0, deltas, 0)
     loss = np.where(deltas < 0, -deltas, 0)
-
     avg_gain = np.mean(gain[-period:])
     avg_loss = np.mean(loss[-period:])
     if avg_loss == 0:
         return 100
-
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
@@ -58,9 +50,6 @@ def compute_trend(prices):
     return "sideways"
 
 
-# -------------------------------
-# پیشنهاد نقطه ورود/خروج
-# -------------------------------
 def trading_signal(prices):
     rsi = compute_rsi(prices)
     ma = compute_ma(prices)
@@ -72,7 +61,6 @@ def trading_signal(prices):
     tp = None
     sl = None
 
-    # قوانین ساده
     if rsi < 30 and last > ma:
         signal = "buy"
         entry = last
@@ -96,9 +84,11 @@ def trading_signal(prices):
     }
 
 
-# -------------------------------
-# API ENDPOINT برای Railway
-# -------------------------------
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+
 @app.route("/analyze", methods=["GET"])
 def analyze():
     symbol = request.args.get("symbol", "EUR/USD")
@@ -112,13 +102,5 @@ def analyze():
     return jsonify(result)
 
 
-@app.route("/")
-def home():
-    return "Forex AI Analyzer Running"
-
-
-# -------------------------------
-# اجرای سرور
-# -------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
