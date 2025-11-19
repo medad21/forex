@@ -1,5 +1,3 @@
-﻿flask
+flask
 requests
-numpy
 gunicorn
-
