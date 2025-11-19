@@ -1,0 +1,79 @@
+﻿<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <title>Forex Analyzer</title>
+    <style>
+        body {
+            background: #0b1221;
+            color: white;
+            font-family: sans-serif;
+        }
+        .box {
+            width: 90%;
+            margin: auto;
+            background: #11192c;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #3c73ff;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <h2>تحلیل‌گر هوشمند فارکس</h2>
+
+    <label>نماد:</label>
+    <input id="symbol" value="EUR/USD" style="padding:5px;">
+
+    <label>تایم‌فریم:</label>
+    <input id="interval" value="15min" style="padding:5px;">
+
+    <button onclick="analyze()">تحلیل کن</button>
+
+    <pre id="output" style="margin-top:20px; white-space: pre-wrap;"></pre>
+</div>
+
+<div class="box">
+    <h3>نمودار زنده</h3>
+    <div id="tvchart" style="height:480px;"></div>
+</div>
+
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+
+<script>
+    new TradingView.widget({
+        "width": "100%",
+        "height": 480,
+        "symbol": "FX:EURUSD",
+        "interval": "15",
+        "timezone": "Etc/UTC",
+        "theme": "dark",
+        "style": "1",
+        "container_id": "tvchart"
+    });
+
+
+    async function analyze() {
+        let symbol = document.getElementById("symbol").value;
+        let interval = document.getElementById("interval").value;
+
+        let response = await fetch(`/analyze?symbol=${symbol}&interval=${interval}`);
+        let data = await response.json();
+
+        document.getElementById("output").innerText = JSON.stringify(data, null, 2);
+    }
+</script>
+
+</body>
+</html>
