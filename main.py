@@ -1,10 +1,11 @@
 from flask import Flask, request, render_template, jsonify
 import requests
 import urllib.parse
+import os   #  ← مهم‌ترین خط
 
 app = Flask(__name__)
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "df521019db9f44899bfb172fdce6b454"
 
 @app.route("/")
 def index():
@@ -37,5 +38,3 @@ def analyze():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
