@@ -5,27 +5,41 @@ import os
 
 app = Flask(__name__)
 
-API_KEY = "df521019db9f44899bfb172fdce6b454"
+API_KEY = "df521019db9f44899bfb172fdce6b454"   # ← اینو با کلید خودت جایگزین کن
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/analyze", methods=["GET"])
 def analyze():
     symbol = request.args.get("symbol")
     interval = request.args.get("interval")
 
+    if not symbol or not interval:
+        return jsonify({"error": "missing parameters"})
+
     encoded_symbol = urllib.parse.quote(symbol, safe='')
 
-    url = f"https://api.twelvedata.com/time_series?symbol={encoded_symbol}&interval={interval}&apikey={API_KEY}"
-    response = requests.get(url).json()
+    url = (
+        f"https://api.twelvedata.com/time_series?"
+        f"symbol={encoded_symbol}&interval={interval}&apikey={API_KEY}"
+    )
+
+    try:
+        response = requests.get(url, timeout=10).json()
+    except Exception as e:
+        return jsonify({"error": "request failed", "details": str(e)})
 
     if "values" not in response:
         return jsonify({"error": "cannot fetch data", "api_response": response})
 
-    last = float(response["values"][0]["close"])
-    prev = float(response["values"][1]["close"])
+    try:
+        last = float(response["values"][0]["close"])
+        prev = float(response["values"][1]["close"])
+    except:
+        return jsonify({"error": "invalid data structure", "api_response": response})
 
     direction = "📈 صعودی" if last > prev else "📉 نزولی"
 
@@ -35,6 +49,7 @@ def analyze():
         "previous_price": prev
     })
 
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
