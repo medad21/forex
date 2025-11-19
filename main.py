@@ -4,7 +4,7 @@ import urllib.parse
 
 app = Flask(__name__)
 
-API_KEY = "df521019db9f44899bfb172fdce6b454"   # اینجا API Key که از TwelveData گرفتی را قرار بده
+API_KEY = "YOUR_API_KEY"
 
 @app.route("/")
 def index():
@@ -12,24 +12,17 @@ def index():
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    symbol   = request.form.get("symbol")
+    symbol = request.form.get("symbol")
     interval = request.form.get("interval")
 
-    # تبدیل EUR/USD به EUR%2FUSD
     encoded_symbol = urllib.parse.quote(symbol, safe='')
 
     url = f"https://api.twelvedata.com/time_series?symbol={encoded_symbol}&interval={interval}&apikey={API_KEY}"
-
     response = requests.get(url).json()
 
-    # بررسی خطای API
     if "values" not in response:
-        return jsonify({
-            "error": "cannot fetch data",
-            "api_response": response
-        })
+        return jsonify({"error": "cannot fetch data", "api_response": response})
 
-    # داده سالم دریافت شد
     last = float(response["values"][0]["close"])
     prev = float(response["values"][1]["close"])
 
@@ -41,9 +34,5 @@ def analyze():
         "previous_price": prev
     })
 
-
 if __name__ == "__main__":
-   app.run(host="0.0.0.0", port=5000)
-
-
-
+    app.run(host="0.0.0.0", port=5000)
