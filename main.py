@@ -4,7 +4,7 @@ import urllib.parse
 
 app = Flask(__name__)
 
-API_KEY = "YOUR_API_KEY"   # اینجا API Key که از TwelveData گرفتی را قرار بده
+API_KEY = "df521019db9f44899bfb172fdce6b454"   # اینجا API Key که از TwelveData گرفتی را قرار بده
 
 @app.route("/")
 def index():
@@ -44,3 +44,4 @@ def analyze():
 
 if __name__ == "__main__":
     app.run()
+
