@@ -1,7 +1,7 @@
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, render_template, request, jsonify
 import requests
 import urllib.parse
-import os   #  ← مهم‌ترین خط
+import os
 
 app = Flask(__name__)
 
@@ -11,10 +11,10 @@ API_KEY = "df521019db9f44899bfb172fdce6b454"
 def index():
     return render_template("index.html")
 
-@app.route("/analyze", methods=["POST"])
+@app.route("/analyze", methods=["GET"])
 def analyze():
-    symbol = request.form.get("symbol")
-    interval = request.form.get("interval")
+    symbol = request.args.get("symbol")
+    interval = request.args.get("interval")
 
     encoded_symbol = urllib.parse.quote(symbol, safe='')
 
