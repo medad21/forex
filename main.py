@@ -5,12 +5,11 @@ import os
 
 app = Flask(__name__)
 
-API_KEY = "df521019db9f44899bfb172fdce6b454"   # ← اینو با کلید خودت جایگزین کن
+API_KEY = "df521019db9f44899bfb172fdce6b454"
 
 @app.route("/")
 def index():
     return render_template("index.html")
-
 
 @app.route("/analyze", methods=["GET"])
 def analyze():
@@ -48,8 +47,3 @@ def analyze():
         "last_price": last,
         "previous_price": prev
     })
-
-app.run()
-
-
-
