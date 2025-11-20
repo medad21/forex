@@ -31,17 +31,29 @@ def calculate_support_resistance(highs, lows, current_price):
 
 def get_market_sentiment():
     """
-    Simulates market news sentiment (not real-time, just for scoring logic)
+    Simulates market news sentiment.
+    Returns a tuple: (score, {english_text, persian_text})
     """
+    # نکته: این بخش در حال حاضر رندوم است. برای واقعی شدن نیاز به اتصال به API اخبار دارید.
     sentiment_score = random.gauss(0, 0.4) 
-    sentiment_text = "خنثی (بدون خبر مهم)"
+    
+    sentiment_data = {
+        "en": "Neutral (No major news impact)",
+        "fa": "خنثی (بدون خبر تأثیرگذار)"
+    }
     
     if sentiment_score > 0.4:
-        sentiment_text = "مثبت (اخبار صعودی) 🐂"
+        sentiment_data = {
+            "en": "Bullish Sentiment (Positive News) 🐂",
+            "fa": "مثبت (اخبار صعودی بازار) 🐂"
+        }
     elif sentiment_score < -0.4:
-        sentiment_text = "منفی (اخبار نزولی) 🐻"
+        sentiment_data = {
+            "en": "Bearish Sentiment (Negative News) 🐻",
+            "fa": "منفی (اخبار نزولی بازار) 🐻"
+        }
         
-    return sentiment_score, sentiment_text
+    return sentiment_score, sentiment_data
 
 # --- Main Analysis Route ---
 
@@ -57,23 +69,19 @@ def analyze():
     data = response.json()
 
     if "values" not in data:
-        # Return specific error message for no data or API limit hit
         error_message = data.get("message", "Could not fetch data or API limit reached.")
         return jsonify({"error": "no data found", "details": {"message": error_message}})
 
     try:
-        # Process arrays (reverse for chronological order)
         values = data["values"][::-1]
         close = np.array([float(v["close"]) for v in values])
         high = np.array([float(v["high"]) for v in values])
         low = np.array([float(v["low"]) for v in values])
     except Exception as e:
-        # Handle data parsing errors
         return jsonify({"error": "data parsing error"})
 
     # --- Technical Indicators ---
 
-    # EMA (Exponential Moving Average) Calculation
     def ema(series, period):
         k = 2 / (period + 1)
         ema_arr = np.zeros_like(series)
@@ -86,16 +94,14 @@ def analyze():
     ema20 = ema(close, 20)
     ema50 = ema(close, 50)
     
-    # Check if we have enough data points for EMA calculation
     if len(ema20) < 50:
         trend = "neutral"
     else:
-        # Determine trend based on EMA cross
         trend = "uptrend" if ema20[-1] > ema50[-1] else "downtrend"
 
-    # RSI (Relative Strength Index) Calculation
+    # RSI Calculation
     if len(close) < 15:
-        rsi = 50.0 # Neutral value if not enough data
+        rsi = 50.0
         atr = 0.0
     else:
         deltas = np.diff(close)
@@ -106,7 +112,7 @@ def analyze():
         rs = avg_gain / avg_loss if avg_loss != 0 else 100
         rsi = 100 - (100 / (1 + rs))
 
-        # ATR (Average True Range) Calculation
+        # ATR Calculation
         prev_close = np.roll(close, 1)
         prev_close[0] = close[0]
         tr = np.maximum(high - low, np.maximum(abs(high - prev_close), abs(low - prev_close)))
@@ -115,26 +121,21 @@ def analyze():
     # Levels and Sentiment
     last_price = close[-1]
     res_level, sup_level, dist_res, dist_sup = calculate_support_resistance(high, low, last_price)
-    news_score, news_text = get_market_sentiment()
+    news_score, news_text_obj = get_market_sentiment()
 
-    # --- Scoring System for Final Signal ---
+    # --- Scoring System ---
     score = 0
     
-    # 1. Trend Score
     if trend == "uptrend": score += 2
     elif trend == "downtrend": score -= 2
 
-    # 2. RSI Score (Overbought/Oversold)
     if rsi < 30: score += 3 
     elif rsi > 70: score -= 3 
     
-    # 3. S&R Score (Reversal potential near levels)
-    # Check if ATR is reliable (non-zero) before using it for distance calculation
     if atr > 0.00001:
-        if dist_sup < (atr * 1.5): score += 2 # Near Support = Buy signal stronger
-        if dist_res < (atr * 1.5): score -= 2 # Near Resistance = Sell signal stronger
+        if dist_sup < (atr * 1.5): score += 2
+        if dist_res < (atr * 1.5): score -= 2
 
-    # 4. Sentiment Score
     if news_score > 0.4: score += 2
     elif news_score < -0.4: score -= 2
 
@@ -142,34 +143,31 @@ def analyze():
     if score >= 4: final_signal = "buy"
     elif score <= -4: final_signal = "sell"
 
-    # --- Risk Management (TP/SL) ---
+    # --- Risk Management ---
     entry = float(last_price)
     sl = None
     tp = None
 
     if final_signal == "buy" and atr > 0.00001:
-        # Stop Loss below recent support level
         sl = sup_level - (atr * 0.5) 
         risk = entry - sl
-        # Take Profit with 1.5 Risk:Reward Ratio
         tp = entry + (risk * 1.5) 
     elif final_signal == "sell" and atr > 0.00001:
-        # Stop Loss above recent resistance level
         sl = res_level + (atr * 0.5)
         risk = sl - entry
-        # Take Profit with 1.5 Risk:Reward Ratio
         tp = entry - (risk * 1.5)
 
     return jsonify({
         "symbol": symbol,
-        "price": round(entry, 5),
+        "price": round(entry, 5), # This fixes the display issue
         "signal": final_signal,
         "score": score,
         "trend": trend,
         "indicators": {
             "rsi": round(float(rsi), 2),
             "atr": round(float(atr), 5),
-            "sentiment": news_text
+            "ema20": round(float(ema20[-1]), 5),
+            "sentiment": news_text_obj # Sending both FA and EN
         },
         "levels": {
             "support": round(sup_level, 5),
