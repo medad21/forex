@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>داشبورد حرفه‌ای فارکس</title>
+    <title>داشبورد حرفه‌ای تحلیل فارکس (Pro Analyzer)</title>
+    <!-- استفاده از Tailwind CSS برای طراحی ریسپانسیو و مدرن -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
         :root {
@@ -12,207 +14,191 @@
             --text-main: #e2e8f0;
             --text-muted: #94a3b8;
             --accent: #3b82f6;
-            --success: #22c55e;
-            --danger: #ef4444;
+            --success: #10b981; /* زمردی برای خرید */
+            --danger: #ef4444; /* قرمز برای فروش */
         }
         body {
             background-color: var(--bg-dark);
             color: var(--text-main);
             font-family: 'Vazirmatn', sans-serif;
             margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            min-height: 100vh;
+            padding: 1rem;
         }
-        .container {
-            width: 100%;
-            max-width: 1400px;
+        .v-grid {
             display: grid;
             grid-template-columns: 320px 1fr;
-            gap: 20px;
+            gap: 1.5rem;
         }
-        @media (max-width: 900px) {
-            .container { grid-template-columns: 1fr; }
-            #chart-container { height: 450px !important; }
+        @media (max-width: 1024px) {
+            .v-grid { grid-template-columns: 1fr; }
+            #chart-container { height: 400px !important; }
         }
         .card {
             background: var(--card-bg);
-            padding: 20px;
-            border-radius: 16px;
+            border-radius: 1rem;
             border: 1px solid #334155;
-            display: flex;
-            flex-direction: column;
             box-shadow: 0 4px 6px rgba(0,0,0,0.2);
         }
-        h2 { margin: 0 0 15px 0; font-size: 18px; color: var(--accent); text-align: center; border-bottom: 1px solid #334155; padding-bottom: 10px; }
-        label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 13px; }
-        select {
-            width: 100%;
-            padding: 12px;
-            background: var(--bg-dark);
-            border: 1px solid #334155;
-            color: white;
-            border-radius: 8px;
-            font-family: inherit;
-            font-size: 14px;
-            cursor: pointer;
-            margin-bottom: 15px;
-        }
-        button#btn-analyze {
-            width: 100%;
-            padding: 14px;
-            background: var(--accent);
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-weight: bold;
-            cursor: pointer;
-            font-family: inherit;
-            margin-top: 5px;
-        }
-        button#btn-analyze:hover { background: #2563eb; }
-        button#btn-analyze:disabled { background: #475569; cursor: not-allowed; }
-        #result-area { display: none; margin-top: 20px; border-top: 1px solid #334155; padding-top: 15px; animation: fadeIn 0.5s; }
-        .signal-box {
-            padding: 15px;
-            border-radius: 12px;
-            text-align: center;
-            font-weight: 900;
-            font-size: 18px;
-            margin-bottom: 15px;
-        }
-        .buy { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); }
-        .sell { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
-        .neutral { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); border: 1px solid var(--text-muted); }
         .data-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 14px;
-            border-bottom: 1px dashed #334155;
-            padding-bottom: 5px;
+            @apply flex justify-between items-center py-2 border-b border-slate-700/50 text-sm;
         }
-        .data-val { font-weight: bold; direction: ltr; }
-        .tp-sl-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 15px;
+        .data-row span:last-child {
+            @apply font-bold text-base;
         }
-        .mini-box {
-            background: var(--bg-dark);
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid #334155;
+        .signal-box {
+            @apply text-xl font-extrabold p-4 rounded-xl text-center mb-4;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
-        .mini-val { font-size: 15px; font-weight: bold; display: block; direction: ltr; margin-top: 5px;}
+        .buy-signal {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+            border: 2px solid var(--success);
+        }
+        .sell-signal {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+            border: 2px solid var(--danger);
+        }
+        .neutral-signal {
+            background: rgba(148, 163, 184, 0.15);
+            color: var(--text-muted);
+            border: 2px solid var(--text-muted);
+        }
         .news-container {
-            margin-top: 15px;
+            @apply mt-4 p-4 rounded-xl relative;
             background: rgba(59, 130, 246, 0.1);
             border: 1px solid #3b82f6;
-            padding: 15px;
-            border-radius: 12px;
-            position: relative;
         }
-        .news-title { font-size: 12px; color: var(--accent); margin-bottom: 5px; font-weight: bold; }
-        .news-content { font-size: 13px; font-weight: bold; line-height: 1.5; }
+        .news-content {
+             @apply text-sm font-medium leading-relaxed mt-2 whitespace-pre-line;
+        }
         .translate-btn {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: var(--bg-dark);
-            color: var(--text-muted);
-            border: 1px solid #334155;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 10px;
-            cursor: pointer;
+            @apply absolute top-3 left-3 bg-slate-800 text-xs text-slate-400 border border-slate-700 rounded-lg px-2 py-1 cursor-pointer hover:bg-slate-700;
         }
-        .translate-btn:hover { background: var(--card-bg); color: white; }
+        .input-group label {
+            @apply text-sm font-medium mb-1 text-slate-400;
+        }
+        .input-group select {
+            @apply w-full p-3 bg-slate-800 border border-slate-700 text-white rounded-lg mb-4 text-base cursor-pointer;
+        }
         #chart-container {
-            width: 100%;
-            height: 100%;
-            border-radius: 16px;
-            overflow: hidden;
-            border: 1px solid #334155;
-            background: var(--bg-dark);
+            @apply h-[70vh] rounded-xl overflow-hidden;
         }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="card">
-        <h2>⚙️ پنل تحلیل</h2>
-        <label>نماد معاملاتی</label>
-        <select id="symbol" onchange="syncChartOnly()">
-            <optgroup label="Majors">
-                <option value="EUR/USD" selected>EUR/USD</option>
-                <option value="GBP/USD">GBP/USD</option>
-                <option value="USD/JPY">USD/JPY</option>
-                <option value="XAU/USD">XAU/USD (Gold)</option>
-                <option value="BTC/USD">BTC/USD</option>
-            </optgroup>
-        </select>
-        <label>تایم‌فریم</label>
-        <select id="interval" onchange="syncChartOnly()">
-            <option value="5min">5 Min</option>
-            <option value="15min">15 Min</option>
-            <option value="1h" selected>1 Hour</option>
-            <option value="4h">4 Hour</option>
-            <option value="1day">Daily</option>
-        </select>
-        <button onclick="runAnalysis()" id="btn-analyze">آنالیز بازار</button>
+<div class="v-grid min-h-screen">
+    <!-- ستون سمت راست: پنل تحلیل و نتایج -->
+    <div class="card p-5 h-full">
+        <h2 class="text-xl font-extrabold mb-5 text-center text-accent border-b border-slate-700 pb-3">
+            👨‍💻 داشبورد تحلیل‌گر حرفه‌ای
+        </h2>
+        
+        <!-- تنظیمات ورودی -->
+        <div class="input-group">
+            <label for="symbol">نماد معاملاتی</label>
+            <select id="symbol" onchange="syncChartOnly()">
+                <optgroup label="Majors">
+                    <option value="EUR/USD" selected>EUR/USD</option>
+                    <option value="GBP/USD">GBP/USD</option>
+                    <option value="USD/JPY">USD/JPY</option>
+                    <option value="XAU/USD">XAU/USD (Gold)</option>
+                    <option value="BTC/USD">BTC/USD (Crypto)</option>
+                </optgroup>
+            </select>
+        </div>
+        
+        <div class="input-group">
+            <label for="interval">تایم‌فریم</label>
+            <select id="interval" onchange="syncChartOnly()">
+                <option value="5min">5 Min</option>
+                <option value="15min">15 Min</option>
+                <option value="1h" selected>1 Hour</option>
+                <option value="4h">4 Hour</option>
+                <option value="1day">Daily</option>
+            </select>
+        </div>
+        
+        <button onclick="runAnalysis()" id="btn-analyze" class="w-full p-3 bg-accent text-white font-bold rounded-lg hover:bg-blue-600 transition duration-200">
+            📊 آنالیز بازار و سیگنال‌دهی
+        </button>
 
-        <div id="result-area">
+        <!-- نتایج تحلیل -->
+        <div id="result-area" class="mt-6 pt-6 border-t border-slate-700/50 hidden">
             <div id="signal-banner" class="signal-box">---</div>
+
+            <!-- قیمت و روند -->
             <div class="data-row">
                 <span>قیمت لحظه‌ای:</span>
-                <span class="data-val" id="price-val">---</span>
+                <span class="data-val text-yellow-400" id="price-val">---</span>
             </div>
             <div class="data-row">
-                <span>وضعیت روند:</span>
+                <span>وضعیت روند (EMA):</span>
                 <span class="data-val" id="trend-val">---</span>
             </div>
             <div class="data-row">
-                <span>الگوی کندلی:</span>
-                <span class="data-val" id="pattern-val" style="color: #fbbf24;">---</span>
+                <span>الگوی کندلی اخیر:</span>
+                <span class="data-val" id="pattern-val">---</span>
             </div>
             <div class="data-row">
-                <span>امتیاز (Score):</span>
+                <span>امتیاز قدرت سیگنال (Score):</span>
                 <span class="data-val" id="score-val">---</span>
             </div>
-            <div class="tp-sl-grid">
-                <div class="mini-box">
-                    <span style="color:var(--success); font-size:12px;">حد سود (TP)</span>
-                    <span class="mini-val" id="tp-val" style="color:var(--success)">---</span>
+
+            <!-- اندیکاتورهای تکمیلی -->
+            <div class="mt-5 p-3 bg-slate-800 rounded-lg">
+                <div class="text-xs font-semibold text-slate-400 mb-2">جزئیات اندیکاتورها:</div>
+                <div class="data-row border-none">
+                    <span>RSI (اشباع):</span>
+                    <span class="data-val" id="rsi-val">--</span>
                 </div>
-                <div class="mini-box">
-                    <span style="color:var(--danger); font-size:12px;">حد ضرر (SL)</span>
-                    <span class="mini-val" id="sl-val" style="color:var(--danger)">---</span>
+                <div class="data-row border-none">
+                    <span>MACD (مومنتوم):</span>
+                    <span class="data-val text-blue-400" id="macd-val">--</span>
+                </div>
+                <div class="data-row border-none">
+                    <span>ATR (فراریت):</span>
+                    <span class="data-val" id="atr-val">--</span>
+                </div>
+                <div class="data-row border-none">
+                    <span>Bollinger Bands:</span>
+                    <span class="data-val text-pink-400" id="bb-pos-val">--</span>
                 </div>
             </div>
-            <div class="news-container" id="news-box" style="display:none;">
-                <div class="news-title">📰 سنتیمنت بازار (اخبار)</div>
-                <button class="translate-btn" onclick="toggleTranslation()">ترجمه EN/FA</button>
-                <div class="news-content" id="news-text">---</div>
+
+            <!-- مدیریت ریسک -->
+            <div class="grid grid-cols-2 gap-3 mt-5">
+                <div class="p-3 bg-slate-800 rounded-lg text-center border border-success/50">
+                    <span class="text-xs font-semibold text-success block">حد سود (TP - 2R)</span>
+                    <span class="mini-val text-xl font-extrabold mt-1 block" id="tp-val" style="direction: ltr;">---</span>
+                </div>
+                <div class="p-3 bg-slate-800 rounded-lg text-center border border-danger/50">
+                    <span class="text-xs font-semibold text-danger block">حد ضرر (SL - 1R)</span>
+                    <span class="mini-val text-xl font-extrabold mt-1 block" id="sl-val" style="direction: ltr;">---</span>
+                </div>
             </div>
-            <div style="margin-top: 15px; text-align: center; font-size: 11px; color: var(--text-muted);">
-                RSI: <span id="rsi-val">--</span> | ATR: <span id="atr-val">--</span>
+            
+            <!-- تحلیل خبری هوش مصنوعی -->
+            <div class="news-container" id="news-box">
+                <div class="text-sm font-extrabold text-accent">📰 سنتیمنت بازار (تحلیل هوش مصنوعی)</div>
+                <button class="translate-btn" onclick="toggleTranslation()">EN / FA</button>
+                <div class="news-content text-slate-200" id="news-text">---</div>
             </div>
         </div>
     </div>
-    <div id="chart-container"></div>
+
+    <!-- ستون سمت چپ: نمودار تریدینگ ویو -->
+    <div id="chart-container" class="card p-0"></div>
 </div>
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
     let currentNews = { fa: "", en: "" };
     let isPersian = true;
-    const intervalMap = { "5min": "5", "15min": "15", "30min": "30", "1h": "60", "4h": "240", "1day": "D" };
+    // مپینگ تایم‌فریم‌های TwelveData به TradingView
+    const intervalMap = { "5min": "5", "15min": "15", "1h": "60", "4h": "240", "1day": "1D" };
+    const chartContainerId = "chart-container";
 
     window.onload = function() { loadChart("EUR/USD", "1h"); };
 
@@ -223,17 +209,44 @@
     }
 
     function loadChart(symbol, intervalKey) {
-        document.getElementById("chart-container").innerHTML = "";
+        document.getElementById(chartContainerId).innerHTML = "";
+        
         let cleanSymbol = symbol.replace("/", "").replace("-", "");
-        let tvSymbol = "FX:" + cleanSymbol;
-        if (cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) tvSymbol = "BINANCE:" + cleanSymbol + "T";
+        let tvSymbol = "FX_IDC:" + cleanSymbol; // پیش فرض فارکس
+        
+        // تنظیمات نمادهای خاص
+        if (symbol.toLowerCase().includes("xau")) tvSymbol = "FX_IDC:XAUUSD";
+        else if (symbol.toLowerCase().includes("btc")) tvSymbol = "BINANCE:BTCUSDT";
+
         let tvInterval = intervalMap[intervalKey] || "60";
+
         new TradingView.widget({
-            "autosize": true, "symbol": tvSymbol, "interval": tvInterval,
-            "timezone": "Asia/Tehran", "theme": "dark", "style": "1", "locale": "en",
-            "toolbar_bg": "#f1f3f6", "enable_publishing": false, "withdateranges": true,
-            "hide_side_toolbar": false, "allow_symbol_change": true, "container_id": "chart-container",
-            "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies"]
+            "autosize": true,
+            "symbol": tvSymbol,
+            "interval": tvInterval,
+            "timezone": "Asia/Tehran",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "toolbar_bg": "#f1f3f6",
+            "enable_publishing": false,
+            "withdateranges": true,
+            "hide_side_toolbar": false,
+            "allow_symbol_change": true,
+            "container_id": chartContainerId,
+            // اضافه کردن اندیکاتورهای مهم به صورت پیش‌فرض
+            "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies", "BB@tv-basicstudies"],
+            "overrides": {
+                "paneProperties.background": "#0f172a",
+                "paneProperties.vertGridProperties.color": "#2c313a",
+                "paneProperties.horzGridProperties.color": "#2c313a",
+                "symbolWatermarkProperties.color": "rgba(255, 255, 255, 0.08)",
+                "mainSeriesProperties.candleStyle.upColor": "#10b981",
+                "mainSeriesProperties.candleStyle.downColor": "#ef4444",
+                "mainSeriesProperties.candleStyle.drawBorder": true,
+                "mainSeriesProperties.candleStyle.borderUpColor": "#10b981",
+                "mainSeriesProperties.candleStyle.borderDownColor": "#ef4444",
+            }
         });
     }
 
@@ -242,50 +255,84 @@
         const interval = document.getElementById("interval").value;
         const btn = document.getElementById("btn-analyze");
         const resultArea = document.getElementById("result-area");
-        const newsBox = document.getElementById("news-box");
 
-        btn.disabled = true; btn.innerText = "در حال پردازش...";
-        resultArea.style.opacity = "0.5";
+        btn.disabled = true; 
+        btn.innerHTML = '<span class="animate-spin inline-block mr-2">⚙️</span> در حال پردازش...';
+        resultArea.classList.add("opacity-50");
         syncChartOnly();
 
         try {
             const response = await fetch(`/analyze?symbol=${encodeURIComponent(symbol)}&interval=${interval}`);
             const data = await response.json();
 
-            if (data.error) { alert("خطا: " + JSON.stringify(data)); return; }
+            if (data.error) { alert("خطا در دریافت داده: " + (data.details.message || JSON.stringify(data.details))); return; }
 
             displayResults(data);
-            resultArea.style.display = "block";
-            newsBox.style.display = "block";
+            resultArea.classList.remove("hidden");
 
-        } catch (e) { console.error(e); alert("خطا در ارتباط"); } 
-        finally { btn.disabled = false; btn.innerText = "آنالیز بازار"; resultArea.style.opacity = "1"; }
+        } catch (e) { 
+            console.error(e); 
+            alert("خطا در ارتباط با سرور تحلیل. لطفاً بعداً امتحان کنید."); 
+        } 
+        finally { 
+            btn.disabled = false; 
+            btn.innerText = "📊 آنالیز بازار و سیگنال‌دهی"; 
+            resultArea.classList.remove("opacity-50");
+        }
     }
 
     function displayResults(data) {
         const banner = document.getElementById("signal-banner");
+        const trendText = data.trend === "uptrend" ? "صعودی (Bullish) 🟢" : "نزولی (Bearish) 🔴";
+        const trendColor = data.trend === "uptrend" ? "text-success" : "text-danger";
+
+        // نمایش نتایج اصلی
         document.getElementById("price-val").innerText = data.price;
-        document.getElementById("trend-val").innerText = data.trend === "uptrend" ? "صعودی 🐂" : "نزولی 🐻";
+        document.getElementById("trend-val").innerHTML = `<span class="${trendColor} font-bold">${trendText}</span>`;
         document.getElementById("pattern-val").innerText = data.pattern || "الگوی خاصی نیست";
-        document.getElementById("score-val").innerText = data.score;
+        
+        // تنظیم امتیاز با رنگ
+        const scoreElem = document.getElementById("score-val");
+        scoreElem.innerText = data.score;
+        scoreElem.classList.remove('text-success', 'text-danger', 'text-slate-400');
+        if (data.score >= 5) scoreElem.classList.add('text-success');
+        else if (data.score <= -5) scoreElem.classList.add('text-danger');
+        else scoreElem.classList.add('text-slate-400');
+
+
         document.getElementById("tp-val").innerText = data.setup.tp || "---";
         document.getElementById("sl-val").innerText = data.setup.sl || "---";
+
+        // نمایش اندیکاتورهای جزئی
         document.getElementById("rsi-val").innerText = data.indicators.rsi;
         document.getElementById("atr-val").innerText = data.indicators.atr;
+        document.getElementById("macd-val").innerText = data.indicators.macd;
+        document.getElementById("bb-pos-val").innerText = data.indicators.bb_pos === "Breakout" ? "شکست باند ⚠️" : "داخل باند (Inside)";
 
+        // تنظیم سنتیمنت و اخبار
         currentNews = data.indicators.sentiment;
         isPersian = true;
         document.getElementById("news-text").innerText = currentNews.fa;
 
+        // تنظیم سیگنال نهایی
         banner.className = "signal-box";
-        if (data.signal === "buy") { banner.innerHTML = "BUY 🟢"; banner.classList.add("buy"); }
-        else if (data.signal === "sell") { banner.innerHTML = "SELL 🔴"; banner.classList.add("sell"); }
-        else { banner.innerHTML = "NEUTRAL ⚪"; banner.classList.add("neutral"); }
+        if (data.signal === "buy") { 
+            banner.innerHTML = "سیگنال قوی خرید 🟢 BUY"; 
+            banner.classList.add("buy-signal"); 
+        }
+        else if (data.signal === "sell") { 
+            banner.innerHTML = "سیگنال قوی فروش 🔴 SELL"; 
+            banner.classList.add("sell-signal"); 
+        }
+        else { 
+            banner.innerHTML = "سیگنال خنثی ⚪ NEUTRAL"; 
+            banner.classList.add("neutral-signal"); 
+        }
     }
 
     function toggleTranslation() {
         const newsTextElem = document.getElementById("news-text");
-        if (!currentNews.en) return;
+        if (!currentNews.en || !currentNews.fa) return;
         if (isPersian) { newsTextElem.innerText = currentNews.en; isPersian = false; }
         else { newsTextElem.innerText = currentNews.fa; isPersian = true; }
     }
