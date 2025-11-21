@@ -15,7 +15,6 @@
             --success: #22c55e;
             --danger: #ef4444;
         }
-
         body {
             background-color: var(--bg-dark);
             color: var(--text-main);
@@ -26,7 +25,6 @@
             justify-content: center;
             min-height: 100vh;
         }
-
         .container {
             width: 100%;
             max-width: 1400px;
@@ -34,12 +32,10 @@
             grid-template-columns: 320px 1fr;
             gap: 20px;
         }
-
         @media (max-width: 900px) {
             .container { grid-template-columns: 1fr; }
             #chart-container { height: 450px !important; }
         }
-
         .card {
             background: var(--card-bg);
             padding: 20px;
@@ -49,11 +45,8 @@
             flex-direction: column;
             box-shadow: 0 4px 6px rgba(0,0,0,0.2);
         }
-
         h2 { margin: 0 0 15px 0; font-size: 18px; color: var(--accent); text-align: center; border-bottom: 1px solid #334155; padding-bottom: 10px; }
-
         label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 13px; }
-        
         select {
             width: 100%;
             padding: 12px;
@@ -66,7 +59,6 @@
             cursor: pointer;
             margin-bottom: 15px;
         }
-
         button#btn-analyze {
             width: 100%;
             padding: 14px;
@@ -81,10 +73,7 @@
         }
         button#btn-analyze:hover { background: #2563eb; }
         button#btn-analyze:disabled { background: #475569; cursor: not-allowed; }
-
-        /* Result Section */
         #result-area { display: none; margin-top: 20px; border-top: 1px solid #334155; padding-top: 15px; animation: fadeIn 0.5s; }
-
         .signal-box {
             padding: 15px;
             border-radius: 12px;
@@ -96,7 +85,6 @@
         .buy { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); }
         .sell { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
         .neutral { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); border: 1px solid var(--text-muted); }
-
         .data-row {
             display: flex;
             justify-content: space-between;
@@ -106,7 +94,6 @@
             padding-bottom: 5px;
         }
         .data-val { font-weight: bold; direction: ltr; }
-
         .tp-sl-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -121,8 +108,6 @@
             border: 1px solid #334155;
         }
         .mini-val { font-size: 15px; font-weight: bold; display: block; direction: ltr; margin-top: 5px;}
-
-        /* News Box Styles */
         .news-container {
             margin-top: 15px;
             background: rgba(59, 130, 246, 0.1);
@@ -132,8 +117,7 @@
             position: relative;
         }
         .news-title { font-size: 12px; color: var(--accent); margin-bottom: 5px; font-weight: bold; }
-        .news-content { font-size: 14px; font-weight: bold; line-height: 1.5; }
-        
+        .news-content { font-size: 13px; font-weight: bold; line-height: 1.5; }
         .translate-btn {
             position: absolute;
             top: 10px;
@@ -147,7 +131,6 @@
             cursor: pointer;
         }
         .translate-btn:hover { background: var(--card-bg); color: white; }
-
         #chart-container {
             width: 100%;
             height: 100%;
@@ -162,11 +145,8 @@
 <body>
 
 <div class="container">
-    
-    <!-- Control Panel -->
     <div class="card">
         <h2>⚙️ پنل تحلیل</h2>
-        
         <label>نماد معاملاتی</label>
         <select id="symbol" onchange="syncChartOnly()">
             <optgroup label="Majors">
@@ -177,7 +157,6 @@
                 <option value="BTC/USD">BTC/USD</option>
             </optgroup>
         </select>
-
         <label>تایم‌فریم</label>
         <select id="interval" onchange="syncChartOnly()">
             <option value="5min">5 Min</option>
@@ -186,13 +165,10 @@
             <option value="4h">4 Hour</option>
             <option value="1day">Daily</option>
         </select>
-
         <button onclick="runAnalysis()" id="btn-analyze">آنالیز بازار</button>
 
-        <!-- Results -->
         <div id="result-area">
             <div id="signal-banner" class="signal-box">---</div>
-            
             <div class="data-row">
                 <span>قیمت لحظه‌ای:</span>
                 <span class="data-val" id="price-val">---</span>
@@ -202,10 +178,13 @@
                 <span class="data-val" id="trend-val">---</span>
             </div>
             <div class="data-row">
+                <span>الگوی کندلی:</span>
+                <span class="data-val" id="pattern-val" style="color: #fbbf24;">---</span>
+            </div>
+            <div class="data-row">
                 <span>امتیاز (Score):</span>
                 <span class="data-val" id="score-val">---</span>
             </div>
-
             <div class="tp-sl-grid">
                 <div class="mini-box">
                     <span style="color:var(--success); font-size:12px;">حد سود (TP)</span>
@@ -216,31 +195,23 @@
                     <span class="mini-val" id="sl-val" style="color:var(--danger)">---</span>
                 </div>
             </div>
-
-            <!-- News Section with Translation -->
             <div class="news-container" id="news-box" style="display:none;">
                 <div class="news-title">📰 سنتیمنت بازار (اخبار)</div>
                 <button class="translate-btn" onclick="toggleTranslation()">ترجمه EN/FA</button>
                 <div class="news-content" id="news-text">---</div>
             </div>
-
             <div style="margin-top: 15px; text-align: center; font-size: 11px; color: var(--text-muted);">
-                RSI: <span id="rsi-val">--</span> | EMA20: <span id="ema-val">--</span>
+                RSI: <span id="rsi-val">--</span> | ATR: <span id="atr-val">--</span>
             </div>
         </div>
     </div>
-
-    <!-- Chart -->
     <div id="chart-container"></div>
-
 </div>
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
-    // Global variable to store news text for toggling
     let currentNews = { fa: "", en: "" };
     let isPersian = true;
-
     const intervalMap = { "5min": "5", "15min": "15", "30min": "30", "1h": "60", "4h": "240", "1day": "D" };
 
     window.onload = function() { loadChart("EUR/USD", "1h"); };
@@ -257,7 +228,6 @@
         let tvSymbol = "FX:" + cleanSymbol;
         if (cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) tvSymbol = "BINANCE:" + cleanSymbol + "T";
         let tvInterval = intervalMap[intervalKey] || "60";
-
         new TradingView.widget({
             "autosize": true, "symbol": tvSymbol, "interval": tvInterval,
             "timezone": "Asia/Tehran", "theme": "dark", "style": "1", "locale": "en",
@@ -294,20 +264,17 @@
 
     function displayResults(data) {
         const banner = document.getElementById("signal-banner");
-        
-        // Price fix
         document.getElementById("price-val").innerText = data.price;
-        
         document.getElementById("trend-val").innerText = data.trend === "uptrend" ? "صعودی 🐂" : "نزولی 🐻";
+        document.getElementById("pattern-val").innerText = data.pattern || "الگوی خاصی نیست";
         document.getElementById("score-val").innerText = data.score;
         document.getElementById("tp-val").innerText = data.setup.tp || "---";
         document.getElementById("sl-val").innerText = data.setup.sl || "---";
         document.getElementById("rsi-val").innerText = data.indicators.rsi;
-        document.getElementById("ema-val").innerText = data.indicators.ema20;
+        document.getElementById("atr-val").innerText = data.indicators.atr;
 
-        // News Logic
-        currentNews = data.indicators.sentiment; // Store both languages
-        isPersian = true; // Reset to Persian on new analysis
+        currentNews = data.indicators.sentiment;
+        isPersian = true;
         document.getElementById("news-text").innerText = currentNews.fa;
 
         banner.className = "signal-box";
@@ -318,17 +285,10 @@
 
     function toggleTranslation() {
         const newsTextElem = document.getElementById("news-text");
-        if (!currentNews.en) return; // If no data yet
-
-        if (isPersian) {
-            newsTextElem.innerText = currentNews.en;
-            isPersian = false;
-        } else {
-            newsTextElem.innerText = currentNews.fa;
-            isPersian = true;
-        }
+        if (!currentNews.en) return;
+        if (isPersian) { newsTextElem.innerText = currentNews.en; isPersian = false; }
+        else { newsTextElem.innerText = currentNews.fa; isPersian = true; }
     }
 </script>
-
 </body>
 </html>
