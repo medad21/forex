@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
-# 🔑 API KEYS (کلیدهای شما)
+# 🔑 API KEYS
 API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
 
@@ -49,31 +49,24 @@ except Exception as e:
     print(f"❌ WARNING: Failed to load models. Running in basic mode. Error: {e}")
 
 # ---------------------------------------------------------
-# ۲. توابع کمکی (Helper Functions)
+# ۲. توابع کمکی
 # ---------------------------------------------------------
 
-# 🛠️ تابع حیاتی جدید: تبدیل داده‌های NumPy به فرمت استاندارد JSON
 def convert_to_serializable(obj):
-    if isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {k: convert_to_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_serializable(i) for i in obj]
+    if isinstance(obj, np.integer): return int(obj)
+    elif isinstance(obj, np.floating): return float(obj)
+    elif isinstance(obj, np.ndarray): return obj.tolist()
+    elif isinstance(obj, dict): return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list): return [convert_to_serializable(i) for i in obj]
     return obj
 
 def get_candles(symbol, interval, size=2000):
-    # دریافت داده از API
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={size}"
     try:
         response = requests.get(url, timeout=10)
         data = response.json()
         if "values" not in data: 
-            print(f"API Error Response: {data}") # لاگ خطا برای دیباگ
+            print(f"API Error Response: {data}")
             return None
         df = pd.DataFrame(data["values"])
         for c in ['open', 'high', 'low', 'close']: df[c] = pd.to_numeric(df[c])
@@ -114,18 +107,14 @@ def check_divergence(df):
     if 'RSI_14' not in df.columns: df.ta.rsi(length=14, append=True)
     subset = df.iloc[-15:].reset_index(drop=True)
     price, rsi = subset['close'], subset['RSI_14']
-    
     price_high_idx = price.idxmax()
     price_low_idx = price.idxmin()
     curr_price, curr_rsi = price.iloc[-1], rsi.iloc[-1]
-    
     score, msg = 0, "بدون واگرایی"
-    
     if price_high_idx < 14 and curr_price > price[price_high_idx] and curr_rsi < rsi[price_high_idx]: 
         msg, score = "Bearish Div 📉 (کاهش)", -3
     elif price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: 
         msg, score = "Bullish Div 📈 (افزایش)", 3
-        
     return score, msg
 
 def get_market_sentiment(symbol):
@@ -150,7 +139,6 @@ def get_market_sentiment(symbol):
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     if atr is None or np.isnan(atr) or atr == 0: return None, None
     rr = 2.0 
-    
     if signal == "buy":
         sl_base = entry - (atr * 1.5)
         if support != 0 and (entry - support) < (atr * 2.0): sl_base = min(sl_base, support)
@@ -167,7 +155,6 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
 
 def calculate_indicators_and_targets(df):
     df['Returns'] = df['close'].pct_change()
-    
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.ema(length=100, append=True)
@@ -176,7 +163,6 @@ def calculate_indicators_and_targets(df):
     df.ta.macd(append=True)
     df.ta.adx(length=14, append=True)
     df.ta.donchian(lower_length=20, upper_length=20, append=True)
-    
     df['ADX'] = df.get(next((c for c in df.columns if c.startswith('ADX')), ''), 0)
     df['Volatility'] = df['high'] - df['low']
     df['Hour'] = df['datetime'].dt.hour
@@ -192,12 +178,10 @@ def calculate_indicators_and_targets(df):
     df['EMA_Diff_Slow'] = df['EMA_50'] - df['EMA_100']
     df['DCL'] = df.get(next((c for c in df.columns if c.startswith('DCL')), ''), 0)
     df['DCU'] = df.get(next((c for c in df.columns if c.startswith('DCU')), ''), 0)
-    
-    # Target (فقط برای سازگاری ساختار)
     df['Target'] = df.apply(check_target, axis=1, args=(df, TARGET_PERIODS, RISK_REWARD_ATR)) 
-
     return df.dropna().reset_index(drop=True)
 
+# ✅ تابع اصلاح شده برای رفع مشکل Undefined
 def get_ml_prediction_inference(df_full):
     report = {"ensemble_score": 0, "ml_score_final": 0, "individual_results": {}, "message": "AI: خنثی"}
 
@@ -220,16 +204,26 @@ def get_ml_prediction_inference(df_full):
 
         ensemble_score_total = 0
         
+        # پیش‌بینی مدل‌های 2D
         for name, model in [('RF', rf_model), ('LR', lr_model), ('XGB', xgb_model)]:
             prob_p = model.predict_proba(X_scaled_2d)[0][1] 
             confidence_score = (prob_p - 0.5) * 100 
             ensemble_score_total += confidence_score
-            report["individual_results"][name] = round(confidence_score, 1)
+            # 👇 اصلاح اینجا: ارسال Score و Prob به صورت دیکشنری برای فرانت‌اند
+            report["individual_results"][name] = {
+                "score": round(confidence_score, 1),
+                "prob": round(prob_p * 100, 1)
+            }
             
+        # پیش‌بینی مدل LSTM
         prob_p_lstm = lstm_model.predict(X_scaled_3d, verbose=0)[0][0]
         confidence_score_lstm = (prob_p_lstm - 0.5) * 100
         ensemble_score_total += confidence_score_lstm
-        report["individual_results"]["LSTM"] = round(confidence_score_lstm, 1)
+        # 👇 اصلاح اینجا
+        report["individual_results"]["LSTM"] = {
+            "score": round(confidence_score_lstm, 1),
+            "prob": round(prob_p_lstm * 100, 1)
+        }
 
         ml_score = ensemble_score_total / (4 * ML_SCORE_NORMALIZER) 
         report["ensemble_score"] = float(round(ensemble_score_total, 1))
@@ -342,7 +336,6 @@ def analyze():
 
         sl, tp = calculate_smart_sl_tp(price, final_signal, atr, support, resistance)
         
-        # آماده‌سازی پاسخ نهایی
         response_data = {
             "symbol": symbol,
             "interval": interval,
@@ -371,8 +364,6 @@ def analyze():
                 }, 
             }
         }
-
-        # ✅ استفاده از تابع تبدیل برای رفع خطای JSON
         return jsonify(convert_to_serializable(response_data))
 
     except Exception as e:
