@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Trader AI 5.0 (Ultimate)</title>
+    <title>Pro Trader AI 5.1 (ML Report)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
@@ -26,23 +26,33 @@
     <div class="card p-4 h-fit flex flex-col gap-3">
         <div class="flex justify-between items-center border-b border-slate-700 pb-3">
             <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
-                💎 Pro Trader Ultimate
+                💎 Pro Trader Ultimate 5.1
             </h2>
             <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2">
-            <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                <option value="EUR/USD">EUR/USD</option>
-                <option value="GBP/USD">GBP/USD</option>
-                <option value="XAU/USD">XAU/USD</option>
-                <option value="BTC/USD">BTC/USD</option>
-            </select>
-            <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                <option value="15min">15 Min</option>
-                <option value="1h" selected>1 Hour</option>
-                <option value="4h">4 Hour</option>
-            </select>
+        <div class="grid grid-cols-3 gap-2">
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">نماد</label>
+                <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="EUR/USD">EUR/USD</option>
+                    <option value="GBP/USD">GBP/USD</option>
+                    <option value="XAU/USD">XAU/USD</option>
+                    <option value="BTC/USD">BTC/USD</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
+                <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="15min">15 Min</option>
+                    <option value="1h" selected>1 Hour</option>
+                    <option value="4h">4 Hour</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">تعداد کندل‌ها</label>
+                <input type="number" id="candle-size" value="2000" min="100" max="2500" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center">
+            </div>
         </div>
 
         <div class="flex gap-2">
@@ -57,7 +67,7 @@
         </div>
 
         <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm">
-            آنالیز کامل (2000 کندل) ⚡
+            آنالیز کامل (ML Report) ⚡
         </button>
 
         <div id="results" class="hidden flex flex-col gap-3">
@@ -72,16 +82,38 @@
                 <div class="text-[10px] text-blue-300 block mb-1">📰 اخبار (Sentiment):</div>
                 <p id="news-val" class="text-xs text-slate-200 leading-relaxed">---</p>
             </div>
+            
+            <div class="grid grid-cols-2 gap-2">
+                <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
+                    <div class="text-[9px] text-purple-300">هوش مصنوعی (پیش‌بینی)</div>
+                    <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
+                </div>
+                <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
+                    <div class="text-[9px] text-orange-300">رژیم بازار (ADX)</div>
+                    <div id="regime-val" class="text-[10px] font-bold text-white mt-1">---</div>
+                </div>
+            </div>
+
+            <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
+                <p class="text-xs font-bold text-purple-300 mb-1">گزارش عملکرد AI (Backtest)</p>
+                <div class="stat-row">
+                    <span class="text-slate-400">دقت مدل (Accuracy)</span>
+                    <span id="ml-accuracy-val" class="font-mono text-green-400 font-bold">---</span>
+                </div>
+                <div class="stat-row">
+                    <span class="text-slate-400">اهمیت ویژگی‌ها</span>
+                    <span id="ml-importance-val" class="font-mono text-xs text-yellow-400">---</span>
+                </div>
+            </div>
 
             <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                 <div class="stat-row"><span class="text-slate-400">قیمت</span><span id="price-val" class="font-mono font-bold text-yellow-400">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">روند (Trend)</span><span id="trend-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">RSI (14)</span><span id="rsi-val" class="font-mono">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">MACD Status</span><span id="macd-val" class="font-bold">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">تاییدیه تایم بالا</span><span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span></div>
-                <div class="stat-row"><span class="text-slate-400">رژیم بازار (ADX)</span><span id="regime-val" class="text-[10px] font-mono">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">واگرایی</span><span id="div-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">پیش‌بینی AI</span><span id="ai-val" class="text-xs font-mono">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">RSI</span><span id="rsi-val" class="font-mono">---</span></div>
             </div>
 
             <div class="grid grid-cols-2 gap-2">
@@ -125,17 +157,18 @@
 
     async function runAnalysis() {
         const btn = document.getElementById("btn-analyze");
-        btn.disabled = true; btn.innerHTML = "⏳ تحلیل 2000 کندل...";
+        btn.disabled = true; btn.innerHTML = "⏳ تحلیل AI و 2000 کندل...";
         document.getElementById("results").classList.remove("hidden");
         if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
         try {
             const useHtf = document.getElementById("use-htf").checked;
-            const res = await fetch(`/analyze?symbol=${document.getElementById("symbol").value}&interval=${document.getElementById("interval").value}&use_htf=${useHtf}`);
+            const size = document.getElementById("candle-size").value; // دریافت اندازه کندل
+            const res = await fetch(`/analyze?symbol=${document.getElementById("symbol").value}&interval=${document.getElementById("interval").value}&use_htf=${useHtf}&size=${size}`);
             const data = await res.json();
             if(data.error) { console.error(data); return; }
             renderData(data);
         } catch (e) { console.error(e); } 
-        finally { btn.disabled = false; btn.innerHTML = "آنالیز کامل (2000 کندل) ⚡"; applySkeleton(false); }
+        finally { btn.disabled = false; btn.innerHTML = "آنالیز کامل (ML Report) ⚡"; applySkeleton(false); }
     }
 
     function renderData(data) {
@@ -151,12 +184,16 @@
         else if(data.signal === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
         else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
 
-        // Core Data
+        // Core Data & Risk
         document.getElementById("price-val").innerText = data.price;
         document.getElementById("tp-val").innerText = data.setup.tp || "-";
         document.getElementById("sl-val").innerText = data.setup.sl || "-";
+        document.getElementById("sr-val").innerText = data.indicators.sr_levels;
         
-        // Indicators (New/Restored)
+        // News
+        document.getElementById("news-val").innerText = data.indicators.news;
+
+        // Indicators
         const trendEl = document.getElementById("trend-val");
         trendEl.innerText = data.indicators.trend;
         trendEl.className = data.indicators.trend.includes("صعودی") ? "font-bold text-green-400" : "font-bold text-red-400";
@@ -166,10 +203,6 @@
         macdEl.className = data.indicators.macd.includes("Bullish") ? "font-bold text-green-400" : "font-bold text-red-400";
 
         document.getElementById("rsi-val").innerText = data.indicators.rsi;
-        document.getElementById("news-val").innerText = data.indicators.news;
-        
-        // Advanced Indicators
-        document.getElementById("ai-val").innerText = data.indicators.ai_prediction;
         document.getElementById("regime-val").innerText = data.indicators.regime;
         document.getElementById("div-val").innerText = data.indicators.divergence;
 
@@ -178,9 +211,23 @@
         htfEl.innerText = data.indicators.htf_status;
         const htfColor = data.indicators.htf_trend === "uptrend" ? "text-green-400" : (data.indicators.htf_trend === "downtrend" ? "text-red-400" : "text-slate-400");
         htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfColor}`;
+
+        // ML Prediction and Report
+        document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
+        document.getElementById("ml-accuracy-val").innerText = data.indicators.ai_report.accuracy !== 0 ? `${data.indicators.ai_report.accuracy}%` : 'N/A';
+        
+        // Format Feature Importance
+        const importanceData = data.indicators.ai_report.importances;
+        let importanceText = '---';
+        if (Object.keys(importanceData).length > 0) {
+            // Display top 2 features and their score
+            const topFeatures = Object.entries(importanceData).slice(0, 2).map(([key, value]) => `${key}: ${value}`);
+            importanceText = topFeatures.join(' | ');
+        }
+        document.getElementById("ml-importance-val").innerText = importanceText;
     }
 
-    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
+    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val", "ml-accuracy-val", "ml-importance-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
 </script>
 </body>
 </html>
