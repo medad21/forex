@@ -1,9 +1,20 @@
-flask
-requests
-pandas
-pandas-ta    # 👈 بدون پین ورژن
-numpy
-scikit-learn
-xgboost
-tensorflow
-gunicorn
+# Web Framework
+Flask==3.0.0            # 👈 ورژن بالاتر و پایدار
+
+# Data Handling & API
+requests==2.31.0
+pandas==2.1.4           # 👈 پین کردن ورژن
+numpy==1.26.3
+
+# Technical Analysis & ML Models
+pandas-ta==0.3.14b0     # 👈 پین کردن ورژن pandas-ta
+scikit-learn==1.3.2     # 👈 برای مدل‌های RF و LR و Scaler
+xgboost==2.0.3          # 👈 برای مدل XGB
+tensorflow==2.15.0      # 👈 برای مدل LSTM
+
+# Production Server
+gunicorn==21.2.0
+
+# 🚀 Database (PostgreSQL) - جدید و ضروری
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.25
