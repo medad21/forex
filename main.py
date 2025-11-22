@@ -6,6 +6,13 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression 
 from xgboost import XGBClassifier 
+from sklearn.preprocessing import StandardScaler 
+
+# 🔑 واردات جدید: برای شبکه عصبی LSTM
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+# ---------------------------------------------------------
 
 app = Flask(__name__)
 
@@ -18,6 +25,7 @@ API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg"
 # ---------------------------------------------------------
 
 TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
+LSTM_TIME_STEPS = 10 # 🔑 تعداد کندل‌هایی که LSTM به عقب نگاه می‌کند (Lookback)
 
 @app.route("/")
 def index():
@@ -36,7 +44,7 @@ def get_candles(symbol, interval, size=2000):
         return df
     except: return None
 
-# --- سطح ۱، ۲، ۳: (با اصلاح جزئی) ---
+# --- توابع کمکی (بدون تغییر) ---
 def check_market_regime(df):
     if 'ADX_14' not in df.columns: df.ta.adx(length=14, append=True)
     last = df.iloc[-1]
@@ -67,77 +75,160 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با امتیازدهی وزنی و ویژگی‌های پیشرفته) ---
+# تابع بررسی Actionable Target (هدف ۱.۵:۱ در ۵ کندل)
+def check_target(row, df_full, periods, rr_atr):
+    idx = row.name
+    current_close = row['close']
+    atr = row['ATR_Value']
+    
+    # اطمینان از وجود داده کافی در آینده
+    if idx + periods >= len(df_full): return -1
+    
+    future_data = df_full.loc[idx+1 : idx+periods]
+    if future_data.empty: return -1 # Unclassified/NaN
+    
+    # 1. Buy Targets (TP = 1.5*ATR Up, SL = 1.5*ATR Down)
+    tp_buy = current_close + (atr * rr_atr)
+    sl_buy = current_close - (atr * rr_atr)
+    
+    # 2. Sell Targets (TP = 1.5*ATR Down, SL = 1.5*ATR Up)
+    tp_sell = current_close - (atr * rr_atr)
+    sl_sell = current_close + (atr * rr_atr)
+
+    tp_hit_buy_idx = future_data[future_data['high'] >= tp_buy].index.min()
+    sl_hit_buy_idx = future_data[future_data['low'] <= sl_buy].index.min()
+    
+    tp_hit_sell_idx = future_data[future_data['low'] <= tp_sell].index.min()
+    sl_hit_sell_idx = future_data[future_data['high'] >= sl_sell].index.min()
+
+    # شرایط موفقیت Buy: TP خرید قبل از SL خرید یا TP فروش یا SL فروش برخورد کند
+    is_buy_success = (pd.notna(tp_hit_buy_idx) and 
+                      (pd.isna(sl_hit_buy_idx) or tp_hit_buy_idx < sl_hit_buy_idx) and
+                      (pd.isna(tp_hit_sell_idx) or tp_hit_buy_idx < tp_hit_sell_idx) and 
+                      (pd.isna(sl_hit_sell_idx) or tp_hit_buy_idx < sl_hit_sell_idx))
+
+    # شرایط موفقیت Sell: TP فروش قبل از SL فروش یا TP خرید یا SL خرید برخورد کند
+    is_sell_success = (pd.notna(tp_hit_sell_idx) and 
+                       (pd.isna(sl_hit_sell_idx) or tp_hit_sell_idx < sl_hit_sell_idx) and
+                       (pd.isna(tp_hit_buy_idx) or tp_hit_sell_idx < tp_hit_buy_idx) and 
+                       (pd.isna(sl_hit_buy_idx) or tp_hit_sell_idx < sl_hit_buy_idx))
+
+    if is_buy_success:
+        return 1
+    elif is_sell_success:
+        return 0
+        
+    return -1 # Neither hit, or Mixed/Simultaneous
+
+# 🔑 تابع کمکی برای آماده‌سازی داده سه‌بعدی LSTM
+def create_lstm_dataset(X_scaled_df, y, time_steps):
+    Xs, ys = [], []
+    for i in range(len(X_scaled_df) - time_steps):
+        # ساخت پنجره زمانی (Sequence)
+        v = X_scaled_df.iloc[i:(i + time_steps)].values
+        Xs.append(v)
+        # هدف برای پایان پنجره
+        ys.append(y.iloc[i + time_steps])
+    return np.array(Xs), np.array(ys)
+
+# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با LSTM) ---
 def get_ml_prediction(df, size):
     report = {
-        "accuracy": 0,
-        "importances": {},
-        "message": "AI: خنثی",
-        "ensemble_score": 0,
-        "ml_score_final": 0,
-        "individual_results": {}
+        "accuracy": 0, "importances": {}, "message": "AI: خنثی",
+        "ensemble_score": 0, "ml_score_final": 0, "individual_results": {}
     }
     
+    # 🔑 مدل LSTM اضافه شد
     models = {
         'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42),
         'XGB': XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1),
-        'LR': LogisticRegression(solver='liblinear', random_state=42)
+        'LR': LogisticRegression(solver='liblinear', random_state=42),
+        'LSTM': None # مدل LSTM را در ادامه تعریف و آموزش می‌دهیم
     }
 
     try:
-        # Feature Engineering (ویژگی‌های قبلی)
+        # Feature Engineering 
         df['Returns'] = df['close'].pct_change()
         df['RSI'] = df.ta.rsi(length=14)
         df['ADX'] = df.ta.adx(length=14)[df.ta.adx(length=14).columns[0]]
         df['EMA_Diff'] = df.ta.ema(length=20) - df.ta.ema(length=50)
         df['Volatility'] = df['high'] - df['low']
         
-        # 🔑 ویژگی‌های پیشرفته جدید (زمان و نوسان)
-        # 1. تبدیل ستون زمان به فرمت datetime
         df['datetime'] = pd.to_datetime(df['datetime'])
-        
-        # 2. ویژگی‌های زمانی (ساعت روز و روز هفته)
         df['Hour'] = df['datetime'].dt.hour
         df['DayOfWeek'] = df['datetime'].dt.dayofweek
-        
-        # 3. نوسان تاریخی (HV: Historical Volatility) - انحراف معیار بازدهی‌ها در 20 دوره
         df['HV_20'] = df['Returns'].rolling(window=20).std()
+        df['ATR_Value'] = df.ta.atr(length=14) 
         
-        df = df.dropna()
-        if len(df) < 50: 
-            report["message"] = f"AI: دیتای کافی برای آموزش ({len(df)}/{size})"
-            return 0, report
+        # --- مهندسی هدف عملیاتی ---
+        RISK_REWARD_ATR = 1.5
+        TARGET_PERIODS = 5
+        df['Target'] = df.apply(check_target, axis=1, args=(df, TARGET_PERIODS, RISK_REWARD_ATR)) 
 
-        df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
-        
-        # 🔑 به‌روزرسانی ستون‌های ویژگی برای شامل شدن موارد جدید
+        # تمیزکاری داده‌ها
+        df = df[df['Target'] != -1]
         feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
-        
-        test_size = max(100, int(len(df) * 0.1)) 
-        X = df[feature_cols].copy()
-        Y = df['Target'].copy()
+        df = df.dropna(subset=feature_cols + ['Target'])
 
-        X_train = X.iloc[:-test_size]
-        Y_train = Y.iloc[:-test_size]
-        X_test = X.iloc[-test_size:-1]
-        Y_test = Y.iloc[-test_size:-1]
-        
-        last_features = X.iloc[-1].to_frame().T
-        
-        if len(np.unique(Y_train)) < 2: 
-            report["message"] = "AI: دیتای آموزش یکنواخت است"
+        # بررسی حداقل داده
+        if len(df) < 50: 
+            report["message"] = f"AI: دیتای کافی برای آموزش Actionable ({len(df)}/{size})"
             return 0, report
+
+        X = df[feature_cols].copy()
+        Y = df['Target'].copy().astype(int)
+        
+        # --- مقیاس‌دهی ویژگی‌ها (Scaling) ---
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        X_scaled_df = pd.DataFrame(X_scaled, columns=feature_cols, index=X.index)
+
+        # --- آماده‌سازی داده‌ها برای LSTM و سایر مدل‌ها ---
+        
+        # 1. داده‌های 2D (برای RF, XGB, LR)
+        test_size_2d = max(100, int(len(df) * 0.1)) 
+        X_train_2d = X_scaled_df.iloc[:-test_size_2d]
+        Y_train_2d = Y.iloc[:-test_size_2d]
+        X_test_2d = X_scaled_df.iloc[-test_size_2d:-1]
+        Y_test_2d = Y.iloc[-test_size_2d:-1]
+        
+        # 2. داده‌های 3D (برای LSTM)
+        X_lstm, Y_lstm = create_lstm_dataset(X_scaled_df, Y, LSTM_TIME_STEPS)
+        
+        if len(X_lstm) < 50 + LSTM_TIME_STEPS: # اگر داده 3D کافی نباشد
+            report["message"] = "AI: دیتای 3D کافی نیست"
+            return 0, report
+            
+        test_size_3d = max(100, int(len(X_lstm) * 0.1))
+        
+        X_train_lstm = X_lstm[:-test_size_3d]
+        Y_train_lstm = Y_lstm[:-test_size_3d]
+        X_test_lstm = X_lstm[-test_size_3d:-1]
+        Y_test_lstm = Y_lstm[-test_size_3d:-1]
+
+        # 3. داده ورودی نهایی
+        last_features = X.iloc[-1].to_frame().T
+        last_features_scaled_2d = scaler.transform(last_features) # برای RF, XGB, LR
+
+        # برای LSTM، نیاز به آخرین پنجره (TIME_STEPS) از داده مقیاس‌دهی شده داریم
+        last_window_data = X_scaled_df.iloc[-LSTM_TIME_STEPS:].values
+        # Reshape به (1, TIME_STEPS, n_features)
+        last_features_scaled_3d = last_window_data.reshape(1, LSTM_TIME_STEPS, len(feature_cols)) 
+        
+        if len(np.unique(Y_train_2d)) < 2: return 0, report
         
         ensemble_score_total = 0
         test_predictions = {}
         
-        for name, model in models.items():
-            model.fit(X_train, Y_train)
+        # --- آموزش و پیش‌بینی مدل‌های 2D (RF, XGB, LR) ---
+        for name in ['RF', 'XGB', 'LR']:
+            model = models[name]
+            model.fit(X_train_2d, Y_train_2d)
             
-            test_pred = model.predict(X_test)
+            test_pred = model.predict(X_test_2d)
             test_predictions[name] = test_pred
             
-            prob_p = model.predict_proba(last_features)[0][1] 
+            prob_p = model.predict_proba(last_features_scaled_2d)[0][1] 
             
             confidence_score = (prob_p - 0.5) * 100 
             ensemble_score_total += confidence_score
@@ -147,23 +238,61 @@ def get_ml_prediction(df, size):
                 'score': round(float(confidence_score), 1),
                 'msg': 'Buy' if confidence_score > 0 else 'Sell'
             }
+            
+        # --- آموزش و پیش‌بینی مدل 3D (LSTM) ---
+        # تعریف مدل
+        lstm_model = Sequential()
+        lstm_model.add(LSTM(units=50, return_sequences=False, input_shape=(LSTM_TIME_STEPS, len(feature_cols))))
+        lstm_model.add(Dropout(0.2))
+        lstm_model.add(Dense(1, activation='sigmoid'))
+        lstm_model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+        models['LSTM'] = lstm_model
         
-        majority_pred = (test_predictions['RF'] + test_predictions['XGB'] + test_predictions['LR']) > 1 
-        ensemble_accuracy = (majority_pred.astype(int) == Y_test).mean()
+        # آموزش
+        lstm_model.fit(X_train_lstm, Y_train_lstm, epochs=5, batch_size=32, verbose=0)
+        
+        # پیش‌بینی تست
+        test_pred_lstm_prob = lstm_model.predict(X_test_lstm, verbose=0).flatten()
+        test_pred_lstm = (test_pred_lstm_prob > 0.5).astype(int)
+        test_predictions['LSTM'] = test_pred_lstm
+        
+        # پیش‌بینی نهایی
+        prob_p_lstm = lstm_model.predict(last_features_scaled_3d, verbose=0)[0][0]
+        confidence_score_lstm = (prob_p_lstm - 0.5) * 100
+        ensemble_score_total += confidence_score_lstm
+        
+        report["individual_results"]['LSTM'] = {
+            'prob': round(float(prob_p_lstm * 100), 1),
+            'score': round(float(confidence_score_lstm), 1),
+            'msg': 'Buy' if confidence_score_lstm > 0 else 'Sell'
+        }
+        
+        # --- محاسبه دقت Ensemble (با ۴ مدل) ---
+        # توجه: اندازه مجموعه تست 2D و 3D ممکن است کمی متفاوت باشد، لذا فقط از کوچکترین مجموعه برای محاسبه نهایی استفاده می‌کنیم
+        min_test_size = min(len(Y_test_2d), len(Y_test_lstm))
+        
+        total_predictions = np.zeros(min_test_size)
+        total_predictions += test_predictions['RF'][:min_test_size]
+        total_predictions += test_predictions['XGB'][:min_test_size]
+        total_predictions += test_predictions['LR'][:min_test_size]
+        total_predictions += test_predictions['LSTM'][:min_test_size]
+        
+        majority_pred = (total_predictions > 2).astype(int)
+        ensemble_accuracy = (majority_pred == Y_test_lstm[:min_test_size]).mean() # استفاده از Y_test_lstm به عنوان مرجع
         report["accuracy"] = float(round(ensemble_accuracy * 100, 2))
 
         if 'RF' in models:
             importances = dict(zip(feature_cols, models['RF'].feature_importances_))
             report["importances"] = {k: round(float(v), 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
 
-        ML_SCORE_NORMALIZER = 30.0 
+        ML_SCORE_NORMALIZER = 40.0 # نرمالایزر برای ۴ مدل (۴ * ۱۰)
         ml_score = ensemble_score_total / ML_SCORE_NORMALIZER 
 
         final_prob_average = ensemble_score_total / (len(models) * 100) + 0.5 
         
         final_message = f"Ensemble: {round(final_prob_average * 100, 1)}%"
-        if final_prob_average > 0.6: final_message += " 🚀 Strong Buy"
-        elif final_prob_average < 0.4: final_message += " 🔻 Strong Sell"
+        if final_prob_average > 0.6: final_message += " 🚀 Strong Buy (Actionable)"
+        elif final_prob_average < 0.4: final_message += " 🔻 Strong Sell (Actionable)"
         else: final_message += " ⚪ Neutral"
 
         report["ensemble_score"] = float(round(ensemble_score_total, 1))
@@ -173,11 +302,12 @@ def get_ml_prediction(df, size):
         return float(ml_score), report
     
     except Exception as e: 
-        report["message"] = f"AI Error: {str(e)[:15]}..."
+        report["message"] = f"AI Error (LSTM/TF): {str(e)[:40]}..."
         return 0, report
 
-# --- توابع کمکی (بدون تغییر) ---
+# --- بقیه توابع (بدون تغییر) ---
 def get_market_sentiment(symbol):
+    # ... (بدون تغییر) ...
     sentiment_score = 0
     sentiment_text = "اخبار خنثی (بدون رویداد مهم)"
     try:
@@ -196,6 +326,7 @@ def get_market_sentiment(symbol):
     return sentiment_score, sentiment_text
 
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
+    # ... (بدون تغییر) ...
     if not atr or np.isnan(atr): return None, None
     sl_mult, rr = 1.5, 2.0
     if signal == "buy":
@@ -211,6 +342,7 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
 # =========================================================
 @app.route("/analyze", methods=["GET"])
 def analyze():
+    # ... (بدون تغییر) ...
     symbol = request.args.get("symbol", "EUR/USD")
     interval = request.args.get("interval", "1h")
     use_htf = request.args.get("use_htf") == "true"
