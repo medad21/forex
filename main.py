@@ -8,7 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 app = Flask(__name__)
 
 # ---------------------------------------------------------
-# 🔑 API KEYS
+# 🔑 API KEYS (Without changes)
 # ---------------------------------------------------------
 API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
@@ -34,7 +34,7 @@ def get_candles(symbol, interval, size=2000):
         return df
     except: return None
 
-# --- سطح ۱: تشخیص رژیم بازار (ADX) ---
+# --- سطح ۱، ۲، ۳: (بدون تغییر) ---
 def check_market_regime(df):
     if 'ADX_14' not in df.columns: df.ta.adx(length=14, append=True)
     last = df.iloc[-1]
@@ -45,7 +45,6 @@ def check_market_regime(df):
     if adx_val > 50: regime = "Strong Trend (روند قوی)"
     return regime, adx_val
 
-# --- سطح ۲: سطوح حمایت و مقاومت (Donchian) ---
 def get_sr_levels(df):
     df.ta.donchian(lower_length=20, upper_length=20, append=True)
     last = df.iloc[-1]
@@ -55,7 +54,6 @@ def get_sr_levels(df):
     resistance = last.get(res_col, 0)
     return support, resistance
 
-# --- سطح ۳: واگرایی ---
 def check_divergence(df):
     if 'RSI_14' not in df.columns: df.ta.rsi(length=14, append=True)
     subset = df.iloc[-15:].reset_index(drop=True)
@@ -67,7 +65,7 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# --- سطح ۴: یادگیری ماشین (با قابلیت گزارش‌دهی) ---
+# --- سطح ۴: یادگیری ماشین (با Train/Test Split) ---
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0,
@@ -76,6 +74,7 @@ def get_ml_prediction(df, size):
     }
     
     try:
+        # Feature Engineering 
         df['Returns'] = df['close'].pct_change()
         df['RSI'] = df.ta.rsi(length=14)
         df['ADX'] = df.ta.adx(length=14)[df.ta.adx(length=14).columns[0]]
@@ -88,24 +87,39 @@ def get_ml_prediction(df, size):
             return 0, report
 
         df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
-        train_data = df.iloc[:-1]
-        last_features = df.iloc[-1][['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']].to_frame().T
-        
         feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']
-        X_train = train_data[feature_cols]
-        y_train = train_data['Target']
         
-        if len(np.unique(y_train)) < 2: 
-            report["message"] = "AI: دیتا یکنواخت است"
+        # --- پیاده‌سازی Train/Test Split برای ارزیابی واقعی ---
+        # 10% یا حداقل 100 کندل آخر برای تست (دیتای دیده نشده)
+        test_size = max(100, int(len(df) * 0.1)) 
+        
+        # X (Features), Y (Target)
+        X = df[feature_cols].copy()
+        Y = df['Target'].copy()
+
+        # دیتای آموزش: قدیمی‌ترین بخش
+        X_train = X.iloc[:-test_size]
+        Y_train = Y.iloc[:-test_size]
+        
+        # دیتای تست: بخش میانی (جدیدترین بخش که مدل نباید ببیند)
+        X_test = X.iloc[-test_size:-1]
+        Y_test = Y.iloc[-test_size:-1]
+        
+        # آخرین کندل (برای پیش‌بینی زنده)
+        last_features = X.iloc[-1].to_frame().T
+        
+        if len(np.unique(Y_train)) < 2: 
+            report["message"] = "AI: دیتای آموزش یکنواخت است"
             return 0, report
         
-        # 1. آموزش مدل
+        # 1. آموزش مدل (فقط روی X_train)
         model = RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42)
-        model.fit(X_train, y_train)
+        model.fit(X_train, Y_train)
         
-        # 2. Backtest و محاسبه دقت (Accuracy)
-        y_pred_train = model.predict(X_train)
-        accuracy = (y_pred_train == y_train).mean()
+        # 2. Backtest و محاسبه دقت (Accuracy) - **تست روی دیتای دیده نشده (X_test)**
+        y_pred_test = model.predict(X_test)
+        # محاسبه دقت فقط برای دیتای تست
+        accuracy = (y_pred_test == Y_test).mean()
         report["accuracy"] = round(accuracy * 100, 2)
         
         # 3. محاسبه اهمیت ویژگی‌ها (Feature Importance)
@@ -126,7 +140,7 @@ def get_ml_prediction(df, size):
         report["message"] = f"AI Error: {str(e)[:15]}..."
         return 0, report
 
-# --- تابع اخبار (News) ---
+# --- توابع کمکی (بدون تغییر) ---
 def get_market_sentiment(symbol):
     sentiment_score = 0
     sentiment_text = "اخبار خنثی (بدون رویداد مهم)"
@@ -145,7 +159,6 @@ def get_market_sentiment(symbol):
     except: pass
     return sentiment_score, sentiment_text
 
-# --- مدیریت ریسک ---
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     if not atr or np.isnan(atr): return None, None
     sl_mult, rr = 1.5, 2.0
@@ -158,7 +171,7 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     return round(sl_base, 5), round(tp, 5)
 
 # =========================================================
-# MAIN ROUTE
+# MAIN ROUTE (بدون تغییر)
 # =========================================================
 @app.route("/analyze", methods=["GET"])
 def analyze():
@@ -166,20 +179,17 @@ def analyze():
     interval = request.args.get("interval", "1h")
     use_htf = request.args.get("use_htf") == "true"
     
-    # دریافت تعداد کندل انتخابی
     size_str = request.args.get("size", "2000")
     try:
         size = int(size_str)
-        if size < 100: size = 100 # حداقل تعداد برای ML
-        if size > 2500: size = 2500 # حداکثر برای API رایگان
+        if size < 100: size = 100
+        if size > 2500: size = 2500
     except:
         size = 2000
 
-    # 1. دریافت کندل‌ها با اندازه انتخابی
     df = get_candles(symbol, interval, size=size)
     if df is None or df.empty: return jsonify({"error": "API Error"})
 
-    # محاسبات پایه
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.rsi(length=14, append=True)
@@ -189,7 +199,6 @@ def analyze():
     last = df.iloc[-1]
     price = last['close']
     
-    # استخراج داده‌ها
     rsi = last.get(next((c for c in df.columns if c.startswith('RSI')), ''), 50)
     atr = last.get(next((c for c in df.columns if c.startswith('ATRr')), ''), 0)
     ema20 = last.get(next((c for c in df.columns if c.startswith('EMA_20')), ''), price)
@@ -199,14 +208,12 @@ def analyze():
     macd_sig = last.get(next((c for c in df.columns if c.startswith('MACDs_')), ''), 0)
     macd_status = "Bullish 🟢" if macd_line > macd_sig else "Bearish 🔴"
     
-    # اجرای ۴ سطح تحلیل
     regime, adx_val = check_market_regime(df)
     support, resistance = get_sr_levels(df)
     div_score, div_msg = check_divergence(df)
-    ml_score, ml_report = get_ml_prediction(df, size) # ارسال سایز به تابع
+    ml_score, ml_report = get_ml_prediction(df, size) 
     news_score, news_text = get_market_sentiment(symbol)
     
-    # تحلیل HTF
     htf_trend, htf_status = "neutral", "غیرفعال"
     if use_htf:
         htf_int = TIMEFRAME_MAP.get(interval)
@@ -221,10 +228,8 @@ def analyze():
                 htf_trend = "uptrend" if e20_h > e50_h else "downtrend"
                 htf_status = f"فعال ({htf_int})"
 
-    # === سیستم امتیازدهی پیشرفته ===
     score = 0
     
-    # ... (همان منطق امتیازدهی قبلی) ...
     if adx_val > 25: 
         score += 3 if trend == "uptrend" else -3
         score += 1 if macd_line > macd_sig else -1
@@ -245,7 +250,6 @@ def analyze():
     if use_htf and htf_trend != "neutral":
         if trend == htf_trend: score += 2
         else: score -= 1
-    # ... (پایان منطق امتیازدهی) ...
 
     final_signal = "neutral"
     if score >= 5: final_signal = "buy"
@@ -268,7 +272,7 @@ def analyze():
             "regime": f"{regime} (ADX: {int(adx_val)})",
             "sr_levels": f"S: {round(support, 5)} | R: {round(resistance, 5)}",
             "divergence": div_msg,
-            "ai_report": ml_report, # اضافه شدن گزارش ML
+            "ai_report": ml_report, 
         }
     })
 
