@@ -1,9 +1,10 @@
 flask
 requests
 gunicorn
+numpy
 pandas
 pandas-ta
-numpy
 scikit-learn
-# مدل پیشرفته
 xgboost
+tensorflow
+keras
