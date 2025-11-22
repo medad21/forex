@@ -21,7 +21,7 @@ TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
 def index():
     return render_template("index.html")
 
-# دریافت دیتا با حجم بالا (۲۰۰۰ کندل) برای ML
+# دریافت دیتا با حجم بالا (اندازه انتخابی)
 def get_candles(symbol, interval, size=2000):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={size}"
     try:
@@ -67,8 +67,14 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# --- سطح ۴: یادگیری ماشین (روی ۲۰۰۰ کندل) ---
-def get_ml_prediction(df):
+# --- سطح ۴: یادگیری ماشین (با قابلیت گزارش‌دهی) ---
+def get_ml_prediction(df, size):
+    report = {
+        "accuracy": 0,
+        "importances": {},
+        "message": "AI: خنثی"
+    }
+    
     try:
         df['Returns'] = df['close'].pct_change()
         df['RSI'] = df.ta.rsi(length=14)
@@ -77,28 +83,48 @@ def get_ml_prediction(df):
         df['Volatility'] = df['high'] - df['low']
         
         df = df.dropna()
-        if len(df) < 100: return 0, "دیتای ناکافی"
+        if len(df) < 50: 
+            report["message"] = f"AI: دیتای کافی برای آموزش ({len(df)}/{size})"
+            return 0, report
 
         df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
-        train = df.iloc[:-1]
+        train_data = df.iloc[:-1]
         last_features = df.iloc[-1][['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']].to_frame().T
         
+        feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']
+        X_train = train_data[feature_cols]
+        y_train = train_data['Target']
+        
+        if len(np.unique(y_train)) < 2: 
+            report["message"] = "AI: دیتا یکنواخت است"
+            return 0, report
+        
+        # 1. آموزش مدل
         model = RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42)
-        X_train = train[['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']]
-        y_train = train['Target']
-        
-        # بررسی وجود واریانس کافی در دیتا (مهم برای ML)
-        if len(np.unique(y_train)) < 2: return 0, "AI: دیتا یکنواخت است"
-        
         model.fit(X_train, y_train)
+        
+        # 2. Backtest و محاسبه دقت (Accuracy)
+        y_pred_train = model.predict(X_train)
+        accuracy = (y_pred_train == y_train).mean()
+        report["accuracy"] = round(accuracy * 100, 2)
+        
+        # 3. محاسبه اهمیت ویژگی‌ها (Feature Importance)
+        importances = dict(zip(feature_cols, model.feature_importances_))
+        report["importances"] = {k: round(v, 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
+        
+        # 4. پیش‌بینی لحظه‌ای
         prob = model.predict_proba(last_features)[0][1]
         
-        score, msg = 0, "AI: خنثی"
-        if prob > 0.65: score, msg = 3, f"AI: صعود ({int(prob*100)}%) 🚀"
-        elif prob < 0.35: score, msg = -3, f"AI: نزول ({int((1-prob)*100)}%) 🔻"
-        
-        return score, msg
-    except Exception as e: return 0, f"AI Error: {str(e)[:15]}..."
+        ml_score = 0
+        if prob > 0.65: ml_score, report["message"] = 3, f"AI: صعود ({int(prob*100)}%) 🚀"
+        elif prob < 0.35: ml_score, report["message"] = -3, f"AI: نزول ({int((1-prob)*100)}%) 🔻"
+        else: report["message"] = f"AI: عدم قطعیت ({int(prob*100)}%)"
+
+        return ml_score, report
+    
+    except Exception as e: 
+        report["message"] = f"AI Error: {str(e)[:15]}..."
+        return 0, report
 
 # --- تابع اخبار (News) ---
 def get_market_sentiment(symbol):
@@ -122,17 +148,13 @@ def get_market_sentiment(symbol):
 # --- مدیریت ریسک ---
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     if not atr or np.isnan(atr): return None, None
-    
     sl_mult, rr = 1.5, 2.0
     if signal == "buy":
-        # استفاده از حمایت برای SL اگر فاصله کمی نزدیک است
         sl_base = support if (entry - support) < (atr * 2.0) and support != 0 else (entry - atr * sl_mult)
         tp = entry + ((entry - sl_base) * rr)
     else:
-        # استفاده از مقاومت برای SL
         sl_base = resistance if (resistance - entry) < (atr * 2.0) and resistance != 0 else (entry + atr * sl_mult)
         tp = entry - ((sl_base - entry) * rr)
-        
     return round(sl_base, 5), round(tp, 5)
 
 # =========================================================
@@ -143,9 +165,18 @@ def analyze():
     symbol = request.args.get("symbol", "EUR/USD")
     interval = request.args.get("interval", "1h")
     use_htf = request.args.get("use_htf") == "true"
+    
+    # دریافت تعداد کندل انتخابی
+    size_str = request.args.get("size", "2000")
+    try:
+        size = int(size_str)
+        if size < 100: size = 100 # حداقل تعداد برای ML
+        if size > 2500: size = 2500 # حداکثر برای API رایگان
+    except:
+        size = 2000
 
-    # 1. دریافت ۲۰۰۰ کندل
-    df = get_candles(symbol, interval, size=2000)
+    # 1. دریافت کندل‌ها با اندازه انتخابی
+    df = get_candles(symbol, interval, size=size)
     if df is None or df.empty: return jsonify({"error": "API Error"})
 
     # محاسبات پایه
@@ -153,7 +184,6 @@ def analyze():
     df.ta.ema(length=50, append=True)
     df.ta.rsi(length=14, append=True)
     df.ta.atr(length=14, append=True)
-    df.ta.bbands(length=20, std=2, append=True)
     df.ta.macd(append=True)
 
     last = df.iloc[-1]
@@ -162,11 +192,9 @@ def analyze():
     # استخراج داده‌ها
     rsi = last.get(next((c for c in df.columns if c.startswith('RSI')), ''), 50)
     atr = last.get(next((c for c in df.columns if c.startswith('ATRr')), ''), 0)
-    
     ema20 = last.get(next((c for c in df.columns if c.startswith('EMA_20')), ''), price)
     ema50 = last.get(next((c for c in df.columns if c.startswith('EMA_50')), ''), price)
     trend = "uptrend" if ema20 > ema50 else "downtrend"
-    
     macd_line = last.get(next((c for c in df.columns if c.startswith('MACD_')), ''), 0)
     macd_sig = last.get(next((c for c in df.columns if c.startswith('MACDs_')), ''), 0)
     macd_status = "Bullish 🟢" if macd_line > macd_sig else "Bearish 🔴"
@@ -175,12 +203,11 @@ def analyze():
     regime, adx_val = check_market_regime(df)
     support, resistance = get_sr_levels(df)
     div_score, div_msg = check_divergence(df)
-    ml_score, ml_msg = get_ml_prediction(df)
+    ml_score, ml_report = get_ml_prediction(df, size) # ارسال سایز به تابع
     news_score, news_text = get_market_sentiment(symbol)
     
     # تحلیل HTF
-    htf_trend = "neutral"
-    htf_status = "غیرفعال"
+    htf_trend, htf_status = "neutral", "غیرفعال"
     if use_htf:
         htf_int = TIMEFRAME_MAP.get(interval)
         if htf_int:
@@ -197,7 +224,7 @@ def analyze():
     # === سیستم امتیازدهی پیشرفته ===
     score = 0
     
-    # الف) منطق بر اساس رژیم بازار (ADX)
+    # ... (همان منطق امتیازدهی قبلی) ...
     if adx_val > 25: 
         score += 3 if trend == "uptrend" else -3
         score += 1 if macd_line > macd_sig else -1
@@ -206,21 +233,19 @@ def analyze():
         if rsi < 30: score += 3
         elif rsi > 70: score -= 3
         
-    # ب) فیلتر پرایس اکشن (S/R)
     dist_to_res = resistance - price
     dist_to_sup = price - support
     if dist_to_res < (atr * 0.5): score -= 2
     if dist_to_sup < (atr * 0.5): score += 2
 
-    # پ) اضافه کردن امتیازهای پیشرفته
     score += div_score
     score += ml_score
-    score += news_score # اخبار نیز وزن داده میشود
+    score += news_score
     
-    # ت) HTF
     if use_htf and htf_trend != "neutral":
         if trend == htf_trend: score += 2
         else: score -= 1
+    # ... (پایان منطق امتیازدهی) ...
 
     final_signal = "neutral"
     if score >= 5: final_signal = "buy"
@@ -234,19 +259,16 @@ def analyze():
         "score": round(score, 1),
         "setup": {"sl": sl, "tp": tp},
         "indicators": {
-            # موارد درخواستی کاربر
             "trend": "صعودی ↗" if trend == "uptrend" else "نزولی ↘", 
             "rsi": round(rsi, 2),
             "macd": macd_status,
             "news": news_text,
             "htf_status": htf_status,
             "htf_trend": htf_trend,
-
-            # موارد پیشرفته
             "regime": f"{regime} (ADX: {int(adx_val)})",
-            "sr_levels": f"S: {support} | R: {resistance}",
-            "ai_prediction": ml_msg,
+            "sr_levels": f"S: {round(support, 5)} | R: {round(resistance, 5)}",
             "divergence": div_msg,
+            "ai_report": ml_report, # اضافه شدن گزارش ML
         }
     })
 
