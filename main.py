@@ -54,7 +54,6 @@ def get_sr_levels(df):
     res_col = next((c for c in df.columns if c.startswith('DCU')), None)
     support = last.get(res_col, 0)
     resistance = last.get(sup_col, 0)
-    # FIX: تبدیل به float استاندارد Python برای JSON serialization
     return float(support), float(resistance) 
 
 def check_divergence(df):
@@ -68,7 +67,7 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با امتیازدهی وزنی) ---
+# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با امتیازدهی وزنی و ویژگی‌های پیشرفته) ---
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0,
@@ -86,12 +85,23 @@ def get_ml_prediction(df, size):
     }
 
     try:
-        # Feature Engineering 
+        # Feature Engineering (ویژگی‌های قبلی)
         df['Returns'] = df['close'].pct_change()
         df['RSI'] = df.ta.rsi(length=14)
         df['ADX'] = df.ta.adx(length=14)[df.ta.adx(length=14).columns[0]]
         df['EMA_Diff'] = df.ta.ema(length=20) - df.ta.ema(length=50)
         df['Volatility'] = df['high'] - df['low']
+        
+        # 🔑 ویژگی‌های پیشرفته جدید (زمان و نوسان)
+        # 1. تبدیل ستون زمان به فرمت datetime
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        
+        # 2. ویژگی‌های زمانی (ساعت روز و روز هفته)
+        df['Hour'] = df['datetime'].dt.hour
+        df['DayOfWeek'] = df['datetime'].dt.dayofweek
+        
+        # 3. نوسان تاریخی (HV: Historical Volatility) - انحراف معیار بازدهی‌ها در 20 دوره
+        df['HV_20'] = df['Returns'].rolling(window=20).std()
         
         df = df.dropna()
         if len(df) < 50: 
@@ -99,7 +109,9 @@ def get_ml_prediction(df, size):
             return 0, report
 
         df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
-        feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']
+        
+        # 🔑 به‌روزرسانی ستون‌های ویژگی برای شامل شدن موارد جدید
+        feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         
         test_size = max(100, int(len(df) * 0.1)) 
         X = df[feature_cols].copy()
@@ -131,18 +143,18 @@ def get_ml_prediction(df, size):
             ensemble_score_total += confidence_score
             
             report["individual_results"][name] = {
-                'prob': round(float(prob_p * 100), 1), # FIX: تبدیل به float استاندارد
-                'score': round(float(confidence_score), 1), # FIX: تبدیل به float استاندارد
+                'prob': round(float(prob_p * 100), 1),
+                'score': round(float(confidence_score), 1),
                 'msg': 'Buy' if confidence_score > 0 else 'Sell'
             }
         
         majority_pred = (test_predictions['RF'] + test_predictions['XGB'] + test_predictions['LR']) > 1 
         ensemble_accuracy = (majority_pred.astype(int) == Y_test).mean()
-        report["accuracy"] = float(round(ensemble_accuracy * 100, 2)) # FIX: تبدیل به float استاندارد
-        
+        report["accuracy"] = float(round(ensemble_accuracy * 100, 2))
+
         if 'RF' in models:
             importances = dict(zip(feature_cols, models['RF'].feature_importances_))
-            report["importances"] = {k: round(float(v), 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)} # FIX: تبدیل به float استاندارد
+            report["importances"] = {k: round(float(v), 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
 
         ML_SCORE_NORMALIZER = 30.0 
         ml_score = ensemble_score_total / ML_SCORE_NORMALIZER 
@@ -154,11 +166,11 @@ def get_ml_prediction(df, size):
         elif final_prob_average < 0.4: final_message += " 🔻 Strong Sell"
         else: final_message += " ⚪ Neutral"
 
-        report["ensemble_score"] = float(round(ensemble_score_total, 1)) # FIX: تبدیل به float استاندارد
-        report["ml_score_final"] = float(round(ml_score, 1)) # FIX: تبدیل به float استاندارد
+        report["ensemble_score"] = float(round(ensemble_score_total, 1))
+        report["ml_score_final"] = float(round(ml_score, 1))
         report["message"] = final_message
 
-        return float(ml_score), report # FIX: تبدیل به float استاندارد
+        return float(ml_score), report
     
     except Exception as e: 
         report["message"] = f"AI Error: {str(e)[:15]}..."
@@ -192,7 +204,6 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     else:
         sl_base = resistance if (resistance - entry) < (atr * 2.0) and resistance != 0 else (entry + atr * sl_mult)
         tp = entry - ((sl_base - entry) * rr)
-    # FIX: اطمینان از خروجی استاندارد float
     return round(float(sl_base), 5) if sl_base is not None else None, round(float(tp), 5) if tp is not None else None
 
 # =========================================================
@@ -218,7 +229,6 @@ def analyze():
     df.ta.macd(append=True)
 
     last = df.iloc[-1]
-    # FIX: تبدیل تمامی مقادیر عددی که از Pandas/NumPy گرفته می‌شوند به float استاندارد
     price = float(last['close'])
     
     rsi = float(last.get(next((c for c in df.columns if c.startswith('RSI')), ''), 50))
@@ -245,7 +255,6 @@ def analyze():
                 df_h.ta.ema(length=20, append=True)
                 df_h.ta.ema(length=50, append=True)
                 l_h = df_h.iloc[-1]
-                # FIX: تبدیل مقادیر HTF به float استاندارد
                 e20_h = float(l_h.get(next((c for c in df_h.columns if c.startswith('EMA_20')), ''), 0))
                 e50_h = float(l_h.get(next((c for c in df_h.columns if c.startswith('EMA_50')), ''), 0))
                 htf_trend = "uptrend" if e20_h > e50_h else "downtrend"
