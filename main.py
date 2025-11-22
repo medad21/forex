@@ -28,7 +28,7 @@ app = Flask(__name__)
 app.json_encoder = NumpyEncoder
 
 # 🔑 API KEYS - خواندن ایمن از متغیرهای محیطی
-API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
+API_KEY_TWELVEDATA = "83a502f14048493b9828008e86b2d0b5" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
 API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg" 
 
@@ -422,5 +422,6 @@ def optimize_route():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
