@@ -7,14 +7,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression 
 from xgboost import XGBClassifier 
 from sklearn.preprocessing import StandardScaler 
+from sklearn.utils import class_weight # 🔑 واردات جدید برای محاسبه وزن کلاس
 
-# 🔑 واردات جدید: برای شبکه عصبی LSTM
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
-# ---------------------------------------------------------
-
-app = Flask(__name__)
 
 # ---------------------------------------------------------
 # 🔑 API KEYS
@@ -25,7 +22,7 @@ API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg"
 # ---------------------------------------------------------
 
 TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
-LSTM_TIME_STEPS = 10 # 🔑 تعداد کندل‌هایی که LSTM به عقب نگاه می‌کند (Lookback)
+LSTM_TIME_STEPS = 10 
 
 @app.route("/")
 def index():
@@ -75,23 +72,19 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# تابع بررسی Actionable Target (هدف ۱.۵:۱ در ۵ کندل)
+# تابع بررسی Actionable Target (بدون تغییر)
 def check_target(row, df_full, periods, rr_atr):
     idx = row.name
     current_close = row['close']
     atr = row['ATR_Value']
     
-    # اطمینان از وجود داده کافی در آینده
     if idx + periods >= len(df_full): return -1
     
     future_data = df_full.loc[idx+1 : idx+periods]
-    if future_data.empty: return -1 # Unclassified/NaN
+    if future_data.empty: return -1
     
-    # 1. Buy Targets (TP = 1.5*ATR Up, SL = 1.5*ATR Down)
     tp_buy = current_close + (atr * rr_atr)
     sl_buy = current_close - (atr * rr_atr)
-    
-    # 2. Sell Targets (TP = 1.5*ATR Down, SL = 1.5*ATR Up)
     tp_sell = current_close - (atr * rr_atr)
     sl_sell = current_close + (atr * rr_atr)
 
@@ -101,13 +94,11 @@ def check_target(row, df_full, periods, rr_atr):
     tp_hit_sell_idx = future_data[future_data['low'] <= tp_sell].index.min()
     sl_hit_sell_idx = future_data[future_data['high'] >= sl_sell].index.min()
 
-    # شرایط موفقیت Buy: TP خرید قبل از SL خرید یا TP فروش یا SL فروش برخورد کند
     is_buy_success = (pd.notna(tp_hit_buy_idx) and 
                       (pd.isna(sl_hit_buy_idx) or tp_hit_buy_idx < sl_hit_buy_idx) and
                       (pd.isna(tp_hit_sell_idx) or tp_hit_buy_idx < tp_hit_sell_idx) and 
                       (pd.isna(sl_hit_sell_idx) or tp_hit_buy_idx < sl_hit_sell_idx))
 
-    # شرایط موفقیت Sell: TP فروش قبل از SL فروش یا TP خرید یا SL خرید برخورد کند
     is_sell_success = (pd.notna(tp_hit_sell_idx) and 
                        (pd.isna(sl_hit_sell_idx) or tp_hit_sell_idx < sl_hit_sell_idx) and
                        (pd.isna(tp_hit_buy_idx) or tp_hit_sell_idx < tp_hit_buy_idx) and 
@@ -118,32 +109,34 @@ def check_target(row, df_full, periods, rr_atr):
     elif is_sell_success:
         return 0
         
-    return -1 # Neither hit, or Mixed/Simultaneous
+    return -1
 
-# 🔑 تابع کمکی برای آماده‌سازی داده سه‌بعدی LSTM
+# تابع کمکی برای آماده‌سازی داده سه‌بعدی LSTM (بدون تغییر)
 def create_lstm_dataset(X_scaled_df, y, time_steps):
     Xs, ys = [], []
     for i in range(len(X_scaled_df) - time_steps):
-        # ساخت پنجره زمانی (Sequence)
         v = X_scaled_df.iloc[i:(i + time_steps)].values
         Xs.append(v)
-        # هدف برای پایان پنجره
         ys.append(y.iloc[i + time_steps])
     return np.array(Xs), np.array(ys)
 
-# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با LSTM) ---
+# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با Class Weighting) ---
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0, "importances": {}, "message": "AI: خنثی",
         "ensemble_score": 0, "ml_score_final": 0, "individual_results": {}
     }
     
-    # 🔑 مدل LSTM اضافه شد
+    # تعریف مدل‌ها با کلاس‌های وزن‌دار
+    # 🔑 LR و RF قابلیت مدیریت وزن کلاس‌ها را دارند
     models = {
-        'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42),
-        'XGB': XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1),
-        'LR': LogisticRegression(solver='liblinear', random_state=42),
-        'LSTM': None # مدل LSTM را در ادامه تعریف و آموزش می‌دهیم
+        # RF: از 'class_weight="balanced"' استفاده می‌کند
+        'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42, class_weight="balanced"),
+        # XGB: وزن‌ها را از طریق 'sample_weight' در متد fit دریافت می‌کند
+        'XGB': XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1), 
+        # LR: از 'class_weight="balanced"' یا دیکشنری وزن استفاده می‌کند
+        'LR': LogisticRegression(solver='liblinear', random_state=42, class_weight="balanced"),
+        'LSTM': None 
     }
 
     try:
@@ -170,7 +163,6 @@ def get_ml_prediction(df, size):
         feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         df = df.dropna(subset=feature_cols + ['Target'])
 
-        # بررسی حداقل داده
         if len(df) < 50: 
             report["message"] = f"AI: دیتای کافی برای آموزش Actionable ({len(df)}/{size})"
             return 0, report
@@ -192,10 +184,22 @@ def get_ml_prediction(df, size):
         X_test_2d = X_scaled_df.iloc[-test_size_2d:-1]
         Y_test_2d = Y.iloc[-test_size_2d:-1]
         
+        # 🔑 محاسبه وزن کلاس‌ها برای مدیریت عدم توازن
+        # این وزن‌ها فقط برای مدل‌هایی که از طریق متد fit() وزن نمونه (sample_weight) می‌پذیرند، مورد نیاز است (مثل XGBoost)
+        class_weights = class_weight.compute_class_weight(
+            class_weight='balanced',
+            classes=np.unique(Y_train_2d),
+            y=Y_train_2d
+        )
+        class_weights_dict = {0: class_weights[0], 1: class_weights[1]}
+        
+        # ساخت آرایه وزن برای هر نمونه در مجموعه آموزش (برای XGBoost)
+        sample_weights_xgb = Y_train_2d.apply(lambda x: class_weights_dict[x]).values
+        
         # 2. داده‌های 3D (برای LSTM)
         X_lstm, Y_lstm = create_lstm_dataset(X_scaled_df, Y, LSTM_TIME_STEPS)
         
-        if len(X_lstm) < 50 + LSTM_TIME_STEPS: # اگر داده 3D کافی نباشد
+        if len(X_lstm) < 50 + LSTM_TIME_STEPS:
             report["message"] = "AI: دیتای 3D کافی نیست"
             return 0, report
             
@@ -206,13 +210,11 @@ def get_ml_prediction(df, size):
         X_test_lstm = X_lstm[-test_size_3d:-1]
         Y_test_lstm = Y_lstm[-test_size_3d:-1]
 
-        # 3. داده ورودی نهایی
+        # داده ورودی نهایی
         last_features = X.iloc[-1].to_frame().T
-        last_features_scaled_2d = scaler.transform(last_features) # برای RF, XGB, LR
+        last_features_scaled_2d = scaler.transform(last_features) 
 
-        # برای LSTM، نیاز به آخرین پنجره (TIME_STEPS) از داده مقیاس‌دهی شده داریم
         last_window_data = X_scaled_df.iloc[-LSTM_TIME_STEPS:].values
-        # Reshape به (1, TIME_STEPS, n_features)
         last_features_scaled_3d = last_window_data.reshape(1, LSTM_TIME_STEPS, len(feature_cols)) 
         
         if len(np.unique(Y_train_2d)) < 2: return 0, report
@@ -221,15 +223,20 @@ def get_ml_prediction(df, size):
         test_predictions = {}
         
         # --- آموزش و پیش‌بینی مدل‌های 2D (RF, XGB, LR) ---
-        for name in ['RF', 'XGB', 'LR']:
+        for name in ['RF', 'LR', 'XGB']:
             model = models[name]
-            model.fit(X_train_2d, Y_train_2d)
+            
+            if name == 'XGB':
+                # 🔑 اعمال وزن نمونه برای XGBoost
+                model.fit(X_train_2d, Y_train_2d, sample_weight=sample_weights_xgb)
+            else:
+                # 🔑 LR و RF از class_weight="balanced" استفاده می‌کنند
+                model.fit(X_train_2d, Y_train_2d)
             
             test_pred = model.predict(X_test_2d)
             test_predictions[name] = test_pred
             
             prob_p = model.predict_proba(last_features_scaled_2d)[0][1] 
-            
             confidence_score = (prob_p - 0.5) * 100 
             ensemble_score_total += confidence_score
             
@@ -240,7 +247,6 @@ def get_ml_prediction(df, size):
             }
             
         # --- آموزش و پیش‌بینی مدل 3D (LSTM) ---
-        # تعریف مدل
         lstm_model = Sequential()
         lstm_model.add(LSTM(units=50, return_sequences=False, input_shape=(LSTM_TIME_STEPS, len(feature_cols))))
         lstm_model.add(Dropout(0.2))
@@ -248,15 +254,14 @@ def get_ml_prediction(df, size):
         lstm_model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
         models['LSTM'] = lstm_model
         
-        # آموزش
-        lstm_model.fit(X_train_lstm, Y_train_lstm, epochs=5, batch_size=32, verbose=0)
+        # 🔑 اعمال وزن کلاس برای LSTM (از دیکشنری وزن‌ها استفاده می‌شود)
+        lstm_model.fit(X_train_lstm, Y_train_lstm, epochs=5, batch_size=32, verbose=0, class_weight=class_weights_dict)
         
-        # پیش‌بینی تست
+        # پیش‌بینی
         test_pred_lstm_prob = lstm_model.predict(X_test_lstm, verbose=0).flatten()
         test_pred_lstm = (test_pred_lstm_prob > 0.5).astype(int)
         test_predictions['LSTM'] = test_pred_lstm
         
-        # پیش‌بینی نهایی
         prob_p_lstm = lstm_model.predict(last_features_scaled_3d, verbose=0)[0][0]
         confidence_score_lstm = (prob_p_lstm - 0.5) * 100
         ensemble_score_total += confidence_score_lstm
@@ -268,7 +273,6 @@ def get_ml_prediction(df, size):
         }
         
         # --- محاسبه دقت Ensemble (با ۴ مدل) ---
-        # توجه: اندازه مجموعه تست 2D و 3D ممکن است کمی متفاوت باشد، لذا فقط از کوچکترین مجموعه برای محاسبه نهایی استفاده می‌کنیم
         min_test_size = min(len(Y_test_2d), len(Y_test_lstm))
         
         total_predictions = np.zeros(min_test_size)
@@ -278,14 +282,14 @@ def get_ml_prediction(df, size):
         total_predictions += test_predictions['LSTM'][:min_test_size]
         
         majority_pred = (total_predictions > 2).astype(int)
-        ensemble_accuracy = (majority_pred == Y_test_lstm[:min_test_size]).mean() # استفاده از Y_test_lstm به عنوان مرجع
+        ensemble_accuracy = (majority_pred == Y_test_lstm[:min_test_size]).mean() 
         report["accuracy"] = float(round(ensemble_accuracy * 100, 2))
 
         if 'RF' in models:
             importances = dict(zip(feature_cols, models['RF'].feature_importances_))
             report["importances"] = {k: round(float(v), 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
 
-        ML_SCORE_NORMALIZER = 40.0 # نرمالایزر برای ۴ مدل (۴ * ۱۰)
+        ML_SCORE_NORMALIZER = 40.0 
         ml_score = ensemble_score_total / ML_SCORE_NORMALIZER 
 
         final_prob_average = ensemble_score_total / (len(models) * 100) + 0.5 
@@ -302,12 +306,12 @@ def get_ml_prediction(df, size):
         return float(ml_score), report
     
     except Exception as e: 
-        report["message"] = f"AI Error (LSTM/TF): {str(e)[:40]}..."
+        # اگر خطا مربوط به TensorFlow/Keras باشد (نصب نشده باشد)
+        report["message"] = f"AI Error (Class Weighting/Model Training): {str(e)[:40]}..."
         return 0, report
 
-# --- بقیه توابع (بدون تغییر) ---
+# --- توابع کمکی (بدون تغییر) ---
 def get_market_sentiment(symbol):
-    # ... (بدون تغییر) ...
     sentiment_score = 0
     sentiment_text = "اخبار خنثی (بدون رویداد مهم)"
     try:
@@ -326,7 +330,6 @@ def get_market_sentiment(symbol):
     return sentiment_score, sentiment_text
 
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
-    # ... (بدون تغییر) ...
     if not atr or np.isnan(atr): return None, None
     sl_mult, rr = 1.5, 2.0
     if signal == "buy":
@@ -342,7 +345,6 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
 # =========================================================
 @app.route("/analyze", methods=["GET"])
 def analyze():
-    # ... (بدون تغییر) ...
     symbol = request.args.get("symbol", "EUR/USD")
     interval = request.args.get("interval", "1h")
     use_htf = request.args.get("use_htf") == "true"
