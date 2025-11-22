@@ -1,7 +1,7 @@
 flask
 requests
 pandas
-pandas-ta==0.3.14b0  # 👈 این خط برای سازگاری با Python 3.11 تغییر کرده است.
+pandas-ta==0.3.10b0  # 👈 ورژن پایدارتر جایگزین شد
 numpy
 scikit-learn
 xgboost
