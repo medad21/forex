@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Trader AI 5.1 (ML Report)</title>
+    <title>Pro Trader AI 6.0 (Ensemble)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
@@ -18,6 +18,7 @@
         .skeleton { animation: pulse 1.5s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
         @keyframes pulse { 50% { opacity: .5; } }
         .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; }
+        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 4px 0; }
     </style>
 </head>
 <body>
@@ -26,7 +27,7 @@
     <div class="card p-4 h-fit flex flex-col gap-3">
         <div class="flex justify-between items-center border-b border-slate-700 pb-3">
             <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
-                💎 Pro Trader Ultimate 5.1
+                💎 Pro Trader Ultimate 6.0 (Ensemble)
             </h2>
             <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
         </div>
@@ -67,7 +68,7 @@
         </div>
 
         <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm">
-            آنالیز کامل (ML Report) ⚡
+            آنالیز کامل (Ensemble AI) ⚡
         </button>
 
         <div id="results" class="hidden flex flex-col gap-3">
@@ -85,7 +86,7 @@
             
             <div class="grid grid-cols-2 gap-2">
                 <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-purple-300">هوش مصنوعی (پیش‌بینی)</div>
+                    <div class="text-[9px] text-purple-300">هوش مصنوعی (Ensemble)</div>
                     <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
                 </div>
                 <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
@@ -95,14 +96,25 @@
             </div>
 
             <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
-                <p class="text-xs font-bold text-purple-300 mb-1">گزارش عملکرد AI (Backtest)</p>
+                <div class="flex justify-between items-center mb-2">
+                    <p class="text-xs font-bold text-purple-300">گزارش عملکرد Ensemble AI</p>
+                    <span id="ensemble-score-raw" class="font-mono text-[10px] bg-slate-700 px-2 rounded">Score: 0</span>
+                </div>
+                
                 <div class="stat-row">
-                    <span class="text-slate-400">دقت مدل (Accuracy)</span>
+                    <span class="text-slate-400">دقت واقعی (Test Accuracy)</span>
                     <span id="ml-accuracy-val" class="font-mono text-green-400 font-bold">---</span>
                 </div>
                 <div class="stat-row">
-                    <span class="text-slate-400">اهمیت ویژگی‌ها</span>
+                    <span class="text-slate-400">اهمیت ویژگی‌ها (RF)</span>
                     <span id="ml-importance-val" class="font-mono text-xs text-yellow-400">---</span>
+                </div>
+
+                <div class="mt-3 border-t border-slate-700 pt-2">
+                    <p class="text-[10px] text-slate-500 mb-1">جزئیات رأی‌گیری مدل‌ها:</p>
+                    <div id="ml-individual-results">
+                        <div class="ml-detail-row skeleton"><span class="text-slate-400">RF (Prob)</span><span class="font-mono">---</span></div>
+                    </div>
                 </div>
             </div>
 
@@ -157,18 +169,18 @@
 
     async function runAnalysis() {
         const btn = document.getElementById("btn-analyze");
-        btn.disabled = true; btn.innerHTML = "⏳ تحلیل AI و 2000 کندل...";
+        btn.disabled = true; btn.innerHTML = "⏳ تحلیل Ensemble AI و 2000 کندل...";
         document.getElementById("results").classList.remove("hidden");
         if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
         try {
             const useHtf = document.getElementById("use-htf").checked;
-            const size = document.getElementById("candle-size").value; // دریافت اندازه کندل
+            const size = document.getElementById("candle-size").value; 
             const res = await fetch(`/analyze?symbol=${document.getElementById("symbol").value}&interval=${document.getElementById("interval").value}&use_htf=${useHtf}&size=${size}`);
             const data = await res.json();
             if(data.error) { console.error(data); return; }
             renderData(data);
         } catch (e) { console.error(e); } 
-        finally { btn.disabled = false; btn.innerHTML = "آنالیز کامل (ML Report) ⚡"; applySkeleton(false); }
+        finally { btn.disabled = false; btn.innerHTML = "آنالیز کامل (Ensemble AI) ⚡"; applySkeleton(false); }
     }
 
     function renderData(data) {
@@ -212,22 +224,41 @@
         const htfColor = data.indicators.htf_trend === "uptrend" ? "text-green-400" : (data.indicators.htf_trend === "downtrend" ? "text-red-400" : "text-slate-400");
         htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfColor}`;
 
-        // ML Prediction and Report
+        // Ensemble ML Prediction and Report
         document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
         document.getElementById("ml-accuracy-val").innerText = data.indicators.ai_report.accuracy !== 0 ? `${data.indicators.ai_report.accuracy}%` : 'N/A';
-        
-        // Format Feature Importance
+        document.getElementById("ensemble-score-raw").innerText = `امتیاز خام: ${data.indicators.ai_report.ensemble_score}`;
+
+        // Feature Importance
         const importanceData = data.indicators.ai_report.importances;
         let importanceText = '---';
         if (Object.keys(importanceData).length > 0) {
-            // Display top 2 features and their score
             const topFeatures = Object.entries(importanceData).slice(0, 2).map(([key, value]) => `${key}: ${value}`);
             importanceText = topFeatures.join(' | ');
         }
         document.getElementById("ml-importance-val").innerText = importanceText;
+
+        // Individual Model Results
+        const individualResults = data.indicators.ai_report.individual_results;
+        const container = document.getElementById("ml-individual-results");
+        container.innerHTML = '';
+        
+        for (const [key, value] of Object.entries(individualResults)) {
+            const sign = value.score > 0 ? '+' : '';
+            const color = value.score > 0 ? 'text-green-400' : (value.score < 0 ? 'text-red-400' : 'text-slate-400');
+            
+            const html = `
+                <div class="ml-detail-row">
+                    <span class="text-slate-400">${key} (Prob / Score)</span>
+                    <span class="font-mono ${color}">${value.prob}% (${sign}${value.score})</span>
+                </div>
+            `;
+            container.innerHTML += html;
+        }
+
     }
 
-    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val", "ml-accuracy-val", "ml-importance-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
+    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val", "ml-accuracy-val", "ml-importance-val", "ensemble-score-raw"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
 </script>
 </body>
 </html>
