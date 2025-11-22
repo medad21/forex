@@ -3,18 +3,20 @@ import requests
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+# 🔑 کتابخانه‌های مورد نیاز برای مدل‌های Ensemble
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression 
 from xgboost import XGBClassifier 
 from sklearn.preprocessing import StandardScaler 
 from sklearn.utils import class_weight 
 
+# 🔑 کتابخانه‌های مورد نیاز برای مدل LSTM (نیازمند نصب tensorflow/keras)
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 
 # ---------------------------------------------------------
-# 🔑 API KEYS
+# 🔑 API KEYS - کلیدهای API
 # ---------------------------------------------------------
 API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
@@ -23,7 +25,8 @@ API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg"
 
 TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
 LSTM_TIME_STEPS = 10 
-ML_CONFIDENCE_THRESHOLD = 1.0 # 🔑 جدید: آستانه اطمینان برای امتیاز AI (از ۴۰.۰)
+# آستانه اطمینان: امتیاز AI باید حداقل 1.0 (معادل 10 امتیاز اطمینان جمعی) باشد تا در سیگنال نهایی محاسبه شود.
+ML_CONFIDENCE_THRESHOLD = 1.0 
 
 app = Flask(__name__)
 
@@ -123,7 +126,7 @@ def create_lstm_dataset(X_scaled_df, y, time_steps):
         ys.append(y.iloc[i + time_steps])
     return np.array(Xs), np.array(ys)
 
-# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با Class Weighting) ---
+# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با Class Weighting و MTF) ---
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0, "importances": {}, "message": "AI: خنثی",
@@ -148,7 +151,7 @@ def get_ml_prediction(df, size):
         df['HV_20'] = df['Returns'].rolling(window=20).std()
         df['ATR_Value'] = df.ta.atr(length=14) 
         
-        # 🔑 گام ۱: ویژگی‌های چندزمانی شبیه‌سازی شده (Simulated MTF)
+        # 🔑 ویژگی‌های چندزمانی شبیه‌سازی شده (Simulated MTF)
         # دیدگاه سریع و کند برای RSI
         df['RSI_14'] = df.ta.rsi(length=14)
         df['RSI_6'] = df.ta.rsi(length=6) 
@@ -168,7 +171,6 @@ def get_ml_prediction(df, size):
         # تمیزکاری داده‌ها
         df = df[df['Target'] != -1]
         
-        # 🔑 بروزرسانی feature_cols
         feature_cols = ['RSI_14', 'RSI_6', 'ADX', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         df = df.dropna(subset=feature_cols + ['Target'])
 
@@ -202,7 +204,10 @@ def get_ml_prediction(df, size):
         
         # داده‌های 3D (برای LSTM)
         X_lstm, Y_lstm = create_lstm_dataset(X_scaled_df, Y, LSTM_TIME_STEPS)
-        if len(X_lstm) < 50 + LSTM_TIME_STEPS: return 0, report
+        
+        if len(X_lstm) < 50 + LSTM_TIME_STEPS:
+             report["message"] = "AI: دیتای 3D کافی نیست"
+             return 0, report
             
         test_size_3d = max(100, int(len(X_lstm) * 0.1))
         X_train_lstm = X_lstm[:-test_size_3d]
@@ -300,7 +305,7 @@ def get_ml_prediction(df, size):
         return float(ml_score), report
     
     except Exception as e: 
-        report["message"] = f"AI Error (MTF/Conf. Threshold): {str(e)[:40]}..."
+        report["message"] = f"AI Error (MTF/Conf. Threshold): {str(e)[:60]}..."
         return 0, report
 
 # --- توابع کمکی (بدون تغییر) ---
@@ -391,15 +396,15 @@ def analyze():
 
     score = 0
     
-    # 🔑 گام ۲: اعمال Confidence Thresholding
-    # اگر امتیاز AI از آستانه اطمینان (ML_CONFIDENCE_THRESHOLD) کمتر بود، آن را نادیده بگیر.
-    if abs(ml_score) >= ML_CONFIDENCE_THRESHOLD:
-        score += ml_score
-    else:
-        # در این صورت پیام AI را به خنثی تغییر می‌دهیم
+    # 🔑 اعمال Confidence Thresholding
+    current_ml_score = ml_score
+    if abs(ml_score) < ML_CONFIDENCE_THRESHOLD:
+        # اگر امتیاز AI کافی نبود، آن را صفر در نظر می‌گیریم تا تأثیری بر سیگنال نهایی نگذارد.
+        current_ml_score = 0
         ml_report["ml_score_final"] = 0
         ml_report["message"] = f"Ensemble: {round(ml_report['ensemble_score'] / 400 * 100 + 50, 1)}% ⚪ Neutral (Low Confidence)"
 
+    score += current_ml_score
 
     # --- محاسبه امتیاز سیگنال دستی/سنتی (بدون تغییر) ---
     if adx_val > 25: 
