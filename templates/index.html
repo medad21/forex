@@ -3,51 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Trader AI 3.0</title>
+    <title>Pro Trader AI Ultimate</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
         :root { --bg-dark: #0f172a; --card-bg: #1e293b; --text-main: #e2e8f0; }
         body { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Vazirmatn', sans-serif; }
-        
-        /* Gauge Meter */
-        .meter-container { width: 100%; height: 14px; background: #334155; border-radius: 7px; position: relative; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); }
-        .meter-fill { height: 100%; position: absolute; transition: all 1s cubic-bezier(0.4, 0, 0.2, 1); }
-        .meter-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; z-index: 10; opacity: 0.5; }
-        
-        .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
-        .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; }
-        
+        .meter-container { width: 100%; height: 12px; background: #334155; border-radius: 6px; position: relative; overflow: hidden; }
+        .meter-fill { height: 100%; position: absolute; transition: all 0.8s; }
+        .meter-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; opacity: 0.5; }
         .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; }
-        .v-grid { display: grid; grid-template-columns: 350px 1fr; gap: 1.5rem; padding: 1rem; }
+        .v-grid { display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; padding: 1rem; }
         @media (max-width: 1024px) { .v-grid { grid-template-columns: 1fr; } #chart-container { height: 500px; } }
-        .skeleton { animation: pulse 2s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
+        .skeleton { animation: pulse 1.5s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
         @keyframes pulse { 50% { opacity: .5; } }
+        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+        .stat-row:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
 
 <div class="v-grid min-h-screen">
-    <div class="card p-5 h-fit flex flex-col gap-5">
-        <div class="flex justify-between items-center border-b border-slate-700 pb-4">
-            <h2 class="text-lg font-black text-blue-400 flex items-center gap-2">
-                🚀 دستیار ترید هوشمند
-            </h2>
-            <div class="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400" id="timer-badge">00:00</div>
+    <div class="card p-4 h-fit flex flex-col gap-4">
+        <div class="flex justify-between items-center border-b border-slate-700 pb-3">
+            <h2 class="text-lg font-black text-blue-400">🤖 دستیار ترید هوشمند</h2>
+            <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
         </div>
 
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-2 gap-2">
             <div>
-                <label class="text-xs text-slate-400 block mb-1">نماد</label>
+                <label class="text-[10px] text-slate-400 block mb-1">نماد</label>
                 <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
                     <option value="EUR/USD">EUR/USD</option>
                     <option value="GBP/USD">GBP/USD</option>
-                    <option value="XAU/USD">XAU/USD (طلا)</option>
+                    <option value="XAU/USD">XAU/USD</option>
                     <option value="BTC/USD">BTC/USD</option>
                 </select>
             </div>
             <div>
-                <label class="text-xs text-slate-400 block mb-1">تایم‌فریم</label>
+                <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
                 <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
                     <option value="15min">15 دقیقه</option>
                     <option value="1h" selected>1 ساعت</option>
@@ -56,84 +50,77 @@
             </div>
         </div>
 
-        <div class="bg-slate-800/50 p-3 rounded-lg space-y-3 border border-slate-700">
+        <div class="bg-slate-800/40 p-2 rounded border border-slate-700 space-y-2">
             <div class="flex items-center justify-between">
-                <div class="flex flex-col">
-                    <span class="text-sm font-bold">تاییدیه تایم‌فریم بالا</span>
-                    <span class="text-[10px] text-slate-400">دقت بیشتر (مصرف API دوبرابر)</span>
-                </div>
-                <input type="checkbox" id="use-htf" class="w-5 h-5 accent-blue-500 cursor-pointer">
+                <span class="text-xs">تاییدیه تایم بالا <span class="text-[9px] text-slate-500">(دقیق‌تر)</span></span>
+                <input type="checkbox" id="use-htf" class="w-4 h-4 accent-blue-500 cursor-pointer">
             </div>
-            
-            <div class="flex items-center justify-between border-t border-slate-700 pt-2">
-                <div class="flex flex-col">
-                    <span class="text-sm font-bold">حالت لایو (Auto Refresh)</span>
-                    <span class="text-[10px] text-slate-400">آپدیت تحلیل هر ۶۰ ثانیه</span>
-                </div>
-                <input type="checkbox" id="auto-refresh" class="w-5 h-5 accent-green-500 cursor-pointer" onchange="toggleAutoRefresh()">
+            <div class="flex items-center justify-between border-t border-slate-700/50 pt-2">
+                <span class="text-xs">آپدیت خودکار <span class="text-[9px] text-slate-500">(Live)</span></span>
+                <input type="checkbox" id="auto-refresh" class="w-4 h-4 accent-green-500 cursor-pointer" onchange="toggleAutoRefresh()">
             </div>
         </div>
 
-        <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition shadow-lg shadow-blue-900/20">
-            آنالیز بازار ⚡
-        </button>
+        <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition text-sm shadow-lg shadow-blue-900/30">آنالیز بازار ⚡</button>
 
         <div id="results" class="hidden flex flex-col gap-4">
             <div id="signal-box" class="text-center p-3 rounded-xl font-black text-xl border-2 bg-slate-800">---</div>
-
+            
             <div>
-                <div class="flex justify-between text-[10px] text-slate-400 mb-1 px-1">
-                    <span>فروش قوی</span>
-                    <span>خنثی</span>
-                    <span>خرید قوی</span>
+                <div class="meter-container"><div class="meter-marker"></div><div id="score-fill" class="meter-fill bg-slate-500" style="width: 0; left: 50%"></div></div>
+                <div class="text-center mt-1 text-[10px] font-mono text-yellow-400" id="score-text">Score: 0</div>
+            </div>
+
+            <div class="bg-gradient-to-r from-slate-800 to-slate-900 border-r-4 border-blue-500 p-3 rounded shadow-md">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-lg">📰</span>
+                    <span class="text-xs font-bold text-blue-300">مهم‌ترین اخبار (هوش مصنوعی):</span>
                 </div>
-                <div class="meter-container">
-                    <div class="meter-marker"></div>
-                    <div id="score-fill" class="meter-fill bg-slate-500" style="width: 0; left: 50%"></div>
-                </div>
-                <div class="text-center mt-1 text-xs font-mono text-yellow-400" id="score-text">0</div>
+                <p id="news-val" class="text-xs text-slate-200 leading-relaxed pr-1">---</p>
             </div>
 
             <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-                <div class="flex justify-between mb-2 pb-2 border-b border-slate-700/50">
-                    <span class="text-sm text-slate-300">قیمت لحظه‌ای (داشبورد)</span>
-                    <span id="price-val" class="font-mono font-bold text-yellow-400 text-lg">---</span>
+                <div class="stat-row">
+                    <span class="text-slate-400">قیمت لحظه‌ای</span>
+                    <span id="price-val" class="font-mono font-bold text-yellow-400">---</span>
                 </div>
-                <div class="flex justify-between items-center">
-                    <span class="text-xs text-slate-400">تاییدیه تایم‌فریم بالا:</span>
-                    <span id="htf-val" class="text-xs font-bold px-2 py-1 rounded bg-slate-700">غیرفعال</span>
+                <div class="stat-row">
+                    <span class="text-slate-400">روند فعلی (Trend)</span>
+                    <span id="trend-val" class="font-bold">---</span>
+                </div>
+                <div class="stat-row">
+                    <span class="text-slate-400">شاخص RSI (14)</span>
+                    <span id="rsi-val" class="font-mono">---</span>
+                </div>
+                <div class="stat-row">
+                    <span class="text-slate-400">وضعیت MACD</span>
+                    <span id="macd-val" class="font-bold">---</span>
+                </div>
+                <div class="stat-row">
+                    <span class="text-slate-400">تایم‌فریم بالا</span>
+                    <span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span>
                 </div>
             </div>
 
             <div class="grid grid-cols-2 gap-2">
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-green-500">
-                    <span class="text-[10px] text-slate-400 block">حد سود (TP)</span>
-                    <span id="tp-val" class="font-mono font-bold">---</span>
-                </div>
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-red-500">
-                    <span class="text-[10px] text-slate-400 block">حد ضرر (SL)</span>
-                    <span id="sl-val" class="font-mono font-bold">---</span>
-                </div>
+                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-green-500"><span class="text-[10px] text-slate-400">TP (سود)</span><div id="tp-val" class="font-mono font-bold text-sm mt-1">---</div></div>
+                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-red-500"><span class="text-[10px] text-slate-400">SL (ضرر)</span><div id="sl-val" class="font-mono font-bold text-sm mt-1">---</div></div>
             </div>
         </div>
     </div>
-
+    
     <div id="chart-container" class="card h-[90vh] overflow-hidden rounded-xl"></div>
 </div>
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
     const intervalMap = { "15min": "15", "1h": "60", "4h": "240" };
-    let refreshTimer = null;
-    let countdownTimer = null;
-
+    let refreshTimer = null; let countdownTimer = null;
     window.onload = () => loadChart("EUR/USD", "1h");
 
-    function syncChartOnly() {
-        const s = document.getElementById("symbol").value;
-        const i = document.getElementById("interval").value;
-        loadChart(s, i);
-        // اگر حالت لایو روشن است، با تغییر نماد دوباره آنالیز کن
+    function syncChartOnly() { 
+        const s = document.getElementById("symbol").value; 
+        loadChart(s, document.getElementById("interval").value);
         if(document.getElementById("auto-refresh").checked) runAnalysis();
     }
 
@@ -141,113 +128,71 @@
         let tvSymbol = "FX_IDC:" + symbol.replace("/", "");
         if(symbol.includes("BTC")) tvSymbol = "BINANCE:BTCUSDT";
         else if(symbol.includes("XAU")) tvSymbol = "FX_IDC:XAUUSD";
-
-        new TradingView.widget({
-            "autosize": true, "symbol": tvSymbol, "interval": intervalMap[intervalKey],
-            "timezone": "Asia/Tehran", "theme": "dark", "style": "1", "locale": "en",
-            "enable_publishing": false, "hide_side_toolbar": false, "container_id": "chart-container",
-            "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies"]
-        });
+        new TradingView.widget({ "autosize": true, "symbol": tvSymbol, "interval": intervalMap[intervalKey], "timezone": "Asia/Tehran", "theme": "dark", "style": "1", "container_id": "chart-container", "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies"] });
     }
 
     function toggleAutoRefresh() {
         const isChecked = document.getElementById("auto-refresh").checked;
         const badge = document.getElementById("timer-badge");
-        
         if (isChecked) {
-            runAnalysis(); // Run immediately
-            let seconds = 60;
-            badge.classList.add("text-green-400");
-            
+            runAnalysis(); let seconds = 60; badge.classList.add("text-green-400");
             refreshTimer = setInterval(() => runAnalysis(), 60000);
-            countdownTimer = setInterval(() => {
-                seconds--;
-                if(seconds <= 0) seconds = 60;
-                badge.innerText = `Next: ${seconds}s`;
-            }, 1000);
-        } else {
-            clearInterval(refreshTimer);
-            clearInterval(countdownTimer);
-            badge.innerText = "00:00";
-            badge.classList.remove("text-green-400");
-        }
+            countdownTimer = setInterval(() => { seconds--; if(seconds <= 0) seconds = 60; badge.innerText = `Next: ${seconds}s`; }, 1000);
+        } else { clearInterval(refreshTimer); clearInterval(countdownTimer); badge.innerText = "00:00"; badge.classList.remove("text-green-400"); }
     }
 
     async function runAnalysis() {
         const btn = document.getElementById("btn-analyze");
-        const symbol = document.getElementById("symbol").value;
-        const interval = document.getElementById("interval").value;
-        const useHtf = document.getElementById("use-htf").checked; // وضعیت چک‌باکس
-
-        btn.disabled = true;
-        btn.innerHTML = "⏳ ...";
+        btn.disabled = true; btn.innerHTML = "⏳ ...";
         document.getElementById("results").classList.remove("hidden");
-        
-        // انیمیشن اسکلتون فقط برای اولین بار یا تغییر نماد
         if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
-
         try {
-            // ارسال وضعیت use_htf به سرور
-            const res = await fetch(`/analyze?symbol=${symbol}&interval=${interval}&use_htf=${useHtf}`);
+            const useHtf = document.getElementById("use-htf").checked;
+            const res = await fetch(`/analyze?symbol=${document.getElementById("symbol").value}&interval=${document.getElementById("interval").value}&use_htf=${useHtf}`);
             const data = await res.json();
-
             if(data.error) { console.error(data); return; }
             renderData(data);
-        } catch (e) {
-            console.error(e);
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = "آنالیز بازار ⚡";
-            applySkeleton(false);
-        }
+        } catch (e) { console.error(e); } 
+        finally { btn.disabled = false; btn.innerHTML = "آنالیز بازار ⚡"; applySkeleton(false); }
     }
 
     function renderData(data) {
-        // 1. Signal Meter
+        // Score Meter
         const fill = document.getElementById("score-fill");
-        const scoreText = document.getElementById("score-text");
-        let pct = 50 + (data.score * 5); // -10 to +10 maps to 0 to 100
-        pct = Math.max(5, Math.min(95, pct)); // Clamp
-        
-        fill.style.left = data.score < 0 ? `${pct}%` : "50%";
-        fill.style.width = `${Math.abs(pct - 50)}%`;
+        let pct = 50 + (data.score * 5); pct = Math.max(5, Math.min(95, pct));
+        fill.style.left = data.score < 0 ? `${pct}%` : "50%"; fill.style.width = `${Math.abs(pct - 50)}%`;
         fill.className = `meter-fill ${data.score > 0 ? 'bg-green-500' : (data.score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
-        scoreText.innerText = `Score: ${data.score}`;
-
-        // 2. Signal Text
+        document.getElementById("score-text").innerText = `Score: ${data.score}`;
+        
+        // Signal
         const box = document.getElementById("signal-box");
-        if(data.signal === "buy") {
-            box.innerHTML = "🟢 سیگنال خرید";
-            box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400";
-        } else if(data.signal === "sell") {
-            box.innerHTML = "🔴 سیگنال فروش";
-            box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400";
-        } else {
-            box.innerHTML = "⚪ خنثی (صبر کنید)";
-            box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400";
-        }
+        if(data.signal === "buy") { box.innerHTML = "🟢 سیگنال خرید"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
+        else if(data.signal === "sell") { box.innerHTML = "🔴 سیگنال فروش"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
+        else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
 
-        // 3. Values
+        // Data Fields
         document.getElementById("price-val").innerText = data.price;
         document.getElementById("tp-val").innerText = data.setup.tp || "-";
         document.getElementById("sl-val").innerText = data.setup.sl || "-";
+        document.getElementById("news-val").innerText = data.sentiment || "بدون خبر خاص";
         
-        // 4. HTF Status
+        // Restored Indicators
+        document.getElementById("trend-val").innerText = data.indicators.trend;
+        document.getElementById("trend-val").className = data.indicators.trend.includes("صعودی") ? "font-bold text-green-400" : "font-bold text-red-400";
+        document.getElementById("rsi-val").innerText = data.indicators.rsi;
+        document.getElementById("macd-val").innerText = data.indicators.macd;
+        document.getElementById("macd-val").className = data.indicators.macd.includes("Bullish") ? "font-bold text-green-400" : "font-bold text-red-400";
+
+        // HTF Status
         const htfEl = document.getElementById("htf-val");
-        if (data.htf_status.includes("غیرفعال")) {
-            htfEl.innerText = "غیرفعال";
-            htfEl.className = "text-xs font-bold px-2 py-1 rounded bg-slate-700 text-slate-400";
-        } else {
-            const color = data.htf_trend === "uptrend" ? "text-green-400" : (data.htf_trend === "downtrend" ? "text-red-400" : "text-slate-300");
-            htfEl.innerHTML = `<span class="${color}">${data.htf_trend.toUpperCase()}</span>`;
-            htfEl.className = "text-xs font-bold px-2 py-1 rounded bg-slate-800 border border-slate-600";
+        if (data.indicators.htf_status.includes("غیرفعال")) { htfEl.innerText = "غیرفعال"; htfEl.className = "text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400"; }
+        else { 
+            const color = data.indicators.htf_trend === "uptrend" ? "text-green-400" : "text-red-400"; 
+            htfEl.innerHTML = `<span class="${color}">${data.indicators.htf_trend.toUpperCase()}</span>`; 
         }
     }
 
-    function applySkeleton(active) {
-        const ids = ["price-val", "tp-val", "sl-val"];
-        ids.forEach(id => document.getElementById(id).classList.toggle("skeleton", active));
-    }
+    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
 </script>
 </body>
 </html>
