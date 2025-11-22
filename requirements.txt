@@ -1,7 +1,7 @@
 flask
 requests
 pandas
-pandas-ta==0.3.10b0  # 👈 ورژن پایدارتر جایگزین شد
+pandas-ta    # 👈 بدون پین ورژن
 numpy
 scikit-learn
 xgboost
