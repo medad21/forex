@@ -4,8 +4,8 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression # New Model
-from xgboost import XGBClassifier # New Model
+from sklearn.linear_model import LogisticRegression 
+from xgboost import XGBClassifier 
 
 app = Flask(__name__)
 
@@ -36,7 +36,7 @@ def get_candles(symbol, interval, size=2000):
         return df
     except: return None
 
-# --- سطح ۱، ۲، ۳: (بدون تغییر) ---
+# --- سطح ۱، ۲، ۳: (با اصلاح جزئی) ---
 def check_market_regime(df):
     if 'ADX_14' not in df.columns: df.ta.adx(length=14, append=True)
     last = df.iloc[-1]
@@ -52,9 +52,10 @@ def get_sr_levels(df):
     last = df.iloc[-1]
     sup_col = next((c for c in df.columns if c.startswith('DCL')), None)
     res_col = next((c for c in df.columns if c.startswith('DCU')), None)
-    support = last.get(sup_col, 0)
-    resistance = last.get(res_col, 0)
-    return support, resistance
+    support = last.get(res_col, 0)
+    resistance = last.get(sup_col, 0)
+    # FIX: تبدیل به float استاندارد Python برای JSON serialization
+    return float(support), float(resistance) 
 
 def check_divergence(df):
     if 'RSI_14' not in df.columns: df.ta.rsi(length=14, append=True)
@@ -71,17 +72,16 @@ def check_divergence(df):
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0,
-        "importances": {}, # Now shows only RF importance for brevity
+        "importances": {},
         "message": "AI: خنثی",
         "ensemble_score": 0,
         "ml_score_final": 0,
         "individual_results": {}
     }
     
-    # تعریف مدل‌های Ensemble
     models = {
         'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42),
-        'XGB': XGBClassifier(use_label_encoder=False, eval_metric='logloss', n_estimators=100, random_state=42, n_jobs=-1),
+        'XGB': XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1),
         'LR': LogisticRegression(solver='liblinear', random_state=42)
     }
 
@@ -101,7 +101,6 @@ def get_ml_prediction(df, size):
         df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
         feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']
         
-        # Train/Test Split
         test_size = max(100, int(len(df) * 0.1)) 
         X = df[feature_cols].copy()
         Y = df['Target'].copy()
@@ -117,47 +116,37 @@ def get_ml_prediction(df, size):
             report["message"] = "AI: دیتای آموزش یکنواخت است"
             return 0, report
         
-        # --- ۱. آموزش مدل‌ها و پیش‌بینی ---
         ensemble_score_total = 0
         test_predictions = {}
         
         for name, model in models.items():
             model.fit(X_train, Y_train)
             
-            # پیش‌بینی تست (برای محاسبه دقت واقعی)
             test_pred = model.predict(X_test)
             test_predictions[name] = test_pred
             
-            # پیش‌بینی لحظه‌ای (احتمال صعود)
             prob_p = model.predict_proba(last_features)[0][1] 
             
-            # --- ۲. امتیازدهی Confidence وزنی (P - 50%) ---
-            confidence_score = (prob_p - 0.5) * 100 # مثلا 0.65 -> +15, 0.45 -> -5
+            confidence_score = (prob_p - 0.5) * 100 
             ensemble_score_total += confidence_score
             
-            # ذخیره نتایج تک مدل
             report["individual_results"][name] = {
-                'prob': round(prob_p * 100, 1),
-                'score': round(confidence_score, 1),
+                'prob': round(float(prob_p * 100), 1), # FIX: تبدیل به float استاندارد
+                'score': round(float(confidence_score), 1), # FIX: تبدیل به float استاندارد
                 'msg': 'Buy' if confidence_score > 0 else 'Sell'
             }
         
-        # --- ۳. محاسبه دقت واقعی Ensemble (رأی اکثریت) ---
         majority_pred = (test_predictions['RF'] + test_predictions['XGB'] + test_predictions['LR']) > 1 
         ensemble_accuracy = (majority_pred.astype(int) == Y_test).mean()
-        report["accuracy"] = round(ensemble_accuracy * 100, 2)
+        report["accuracy"] = float(round(ensemble_accuracy * 100, 2)) # FIX: تبدیل به float استاندارد
         
-        # محاسبه اهمیت ویژگی‌ها (فقط برای RF به عنوان نماینده)
         if 'RF' in models:
             importances = dict(zip(feature_cols, models['RF'].feature_importances_))
-            report["importances"] = {k: round(v, 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
+            report["importances"] = {k: round(float(v), 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)} # FIX: تبدیل به float استاندارد
 
-        # --- ۴. امتیاز نهایی Ensemble (نرمال‌سازی شده) ---
-        # حداکثر امتیاز خام: 150 (50*3) . نرمال‌سازی به حداکثر 5.0 (150/30 = 5)
         ML_SCORE_NORMALIZER = 30.0 
         ml_score = ensemble_score_total / ML_SCORE_NORMALIZER 
 
-        # تبدیل به پیام نهایی
         final_prob_average = ensemble_score_total / (len(models) * 100) + 0.5 
         
         final_message = f"Ensemble: {round(final_prob_average * 100, 1)}%"
@@ -165,11 +154,11 @@ def get_ml_prediction(df, size):
         elif final_prob_average < 0.4: final_message += " 🔻 Strong Sell"
         else: final_message += " ⚪ Neutral"
 
-        report["ensemble_score"] = round(ensemble_score_total, 1)
-        report["ml_score_final"] = round(ml_score, 1)
+        report["ensemble_score"] = float(round(ensemble_score_total, 1)) # FIX: تبدیل به float استاندارد
+        report["ml_score_final"] = float(round(ml_score, 1)) # FIX: تبدیل به float استاندارد
         report["message"] = final_message
 
-        return ml_score, report
+        return float(ml_score), report # FIX: تبدیل به float استاندارد
     
     except Exception as e: 
         report["message"] = f"AI Error: {str(e)[:15]}..."
@@ -203,7 +192,8 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     else:
         sl_base = resistance if (resistance - entry) < (atr * 2.0) and resistance != 0 else (entry + atr * sl_mult)
         tp = entry - ((sl_base - entry) * rr)
-    return round(sl_base, 5), round(tp, 5)
+    # FIX: اطمینان از خروجی استاندارد float
+    return round(float(sl_base), 5) if sl_base is not None else None, round(float(tp), 5) if tp is not None else None
 
 # =========================================================
 # MAIN ROUTE 
@@ -215,12 +205,8 @@ def analyze():
     use_htf = request.args.get("use_htf") == "true"
     
     size_str = request.args.get("size", "2000")
-    try:
-        size = int(size_str)
-        if size < 100: size = 100
-        if size > 2500: size = 2500
-    except:
-        size = 2000
+    try: size = int(size_str); size = max(100, min(2500, size))
+    except: size = 2000
 
     df = get_candles(symbol, interval, size=size)
     if df is None or df.empty: return jsonify({"error": "API Error"})
@@ -232,15 +218,16 @@ def analyze():
     df.ta.macd(append=True)
 
     last = df.iloc[-1]
-    price = last['close']
+    # FIX: تبدیل تمامی مقادیر عددی که از Pandas/NumPy گرفته می‌شوند به float استاندارد
+    price = float(last['close'])
     
-    rsi = last.get(next((c for c in df.columns if c.startswith('RSI')), ''), 50)
-    atr = last.get(next((c for c in df.columns if c.startswith('ATRr')), ''), 0)
-    ema20 = last.get(next((c for c in df.columns if c.startswith('EMA_20')), ''), price)
-    ema50 = last.get(next((c for c in df.columns if c.startswith('EMA_50')), ''), price)
+    rsi = float(last.get(next((c for c in df.columns if c.startswith('RSI')), ''), 50))
+    atr = float(last.get(next((c for c in df.columns if c.startswith('ATRr')), ''), 0))
+    ema20 = float(last.get(next((c for c in df.columns if c.startswith('EMA_20')), ''), price))
+    ema50 = float(last.get(next((c for c in df.columns if c.startswith('EMA_50')), ''), price))
     trend = "uptrend" if ema20 > ema50 else "downtrend"
-    macd_line = last.get(next((c for c in df.columns if c.startswith('MACD_')), ''), 0)
-    macd_sig = last.get(next((c for c in df.columns if c.startswith('MACDs_')), ''), 0)
+    macd_line = float(last.get(next((c for c in df.columns if c.startswith('MACD_')), ''), 0))
+    macd_sig = float(last.get(next((c for c in df.columns if c.startswith('MACDs_')), ''), 0))
     macd_status = "Bullish 🟢" if macd_line > macd_sig else "Bearish 🔴"
     
     regime, adx_val = check_market_regime(df)
@@ -258,8 +245,9 @@ def analyze():
                 df_h.ta.ema(length=20, append=True)
                 df_h.ta.ema(length=50, append=True)
                 l_h = df_h.iloc[-1]
-                e20_h = l_h.get(next((c for c in df_h.columns if c.startswith('EMA_20')), ''), 0)
-                e50_h = l_h.get(next((c for c in df_h.columns if c.startswith('EMA_50')), ''), 0)
+                # FIX: تبدیل مقادیر HTF به float استاندارد
+                e20_h = float(l_h.get(next((c for c in df_h.columns if c.startswith('EMA_20')), ''), 0))
+                e50_h = float(l_h.get(next((c for c in df_h.columns if c.startswith('EMA_50')), ''), 0))
                 htf_trend = "uptrend" if e20_h > e50_h else "downtrend"
                 htf_status = f"فعال ({htf_int})"
 
@@ -279,7 +267,7 @@ def analyze():
     if dist_to_sup < (atr * 0.5): score += 2
 
     score += div_score
-    score += ml_score # اضافه شدن امتیاز وزنی و دقیق ML
+    score += ml_score
     score += news_score
     
     if use_htf and htf_trend != "neutral":
