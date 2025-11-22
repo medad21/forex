@@ -4,11 +4,13 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression # New Model
+from xgboost import XGBClassifier # New Model
 
 app = Flask(__name__)
 
 # ---------------------------------------------------------
-# 🔑 API KEYS (Without changes)
+# 🔑 API KEYS
 # ---------------------------------------------------------
 API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
@@ -65,14 +67,24 @@ def check_divergence(df):
     if price_low_idx < 14 and curr_price < price[price_low_idx] and curr_rsi > rsi[price_low_idx]: msg, score = "Bullish Div 📈", 3
     return score, msg
 
-# --- سطح ۴: یادگیری ماشین (با Train/Test Split) ---
+# --- سطح ۴: یادگیری ماشین (مدل ترکیبی با امتیازدهی وزنی) ---
 def get_ml_prediction(df, size):
     report = {
         "accuracy": 0,
-        "importances": {},
-        "message": "AI: خنثی"
+        "importances": {}, # Now shows only RF importance for brevity
+        "message": "AI: خنثی",
+        "ensemble_score": 0,
+        "ml_score_final": 0,
+        "individual_results": {}
     }
     
+    # تعریف مدل‌های Ensemble
+    models = {
+        'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42),
+        'XGB': XGBClassifier(use_label_encoder=False, eval_metric='logloss', n_estimators=100, random_state=42, n_jobs=-1),
+        'LR': LogisticRegression(solver='liblinear', random_state=42)
+    }
+
     try:
         # Feature Engineering 
         df['Returns'] = df['close'].pct_change()
@@ -89,50 +101,73 @@ def get_ml_prediction(df, size):
         df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
         feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility']
         
-        # --- پیاده‌سازی Train/Test Split برای ارزیابی واقعی ---
-        # 10% یا حداقل 100 کندل آخر برای تست (دیتای دیده نشده)
+        # Train/Test Split
         test_size = max(100, int(len(df) * 0.1)) 
-        
-        # X (Features), Y (Target)
         X = df[feature_cols].copy()
         Y = df['Target'].copy()
 
-        # دیتای آموزش: قدیمی‌ترین بخش
         X_train = X.iloc[:-test_size]
         Y_train = Y.iloc[:-test_size]
-        
-        # دیتای تست: بخش میانی (جدیدترین بخش که مدل نباید ببیند)
         X_test = X.iloc[-test_size:-1]
         Y_test = Y.iloc[-test_size:-1]
         
-        # آخرین کندل (برای پیش‌بینی زنده)
         last_features = X.iloc[-1].to_frame().T
         
         if len(np.unique(Y_train)) < 2: 
             report["message"] = "AI: دیتای آموزش یکنواخت است"
             return 0, report
         
-        # 1. آموزش مدل (فقط روی X_train)
-        model = RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42)
-        model.fit(X_train, Y_train)
+        # --- ۱. آموزش مدل‌ها و پیش‌بینی ---
+        ensemble_score_total = 0
+        test_predictions = {}
         
-        # 2. Backtest و محاسبه دقت (Accuracy) - **تست روی دیتای دیده نشده (X_test)**
-        y_pred_test = model.predict(X_test)
-        # محاسبه دقت فقط برای دیتای تست
-        accuracy = (y_pred_test == Y_test).mean()
-        report["accuracy"] = round(accuracy * 100, 2)
+        for name, model in models.items():
+            model.fit(X_train, Y_train)
+            
+            # پیش‌بینی تست (برای محاسبه دقت واقعی)
+            test_pred = model.predict(X_test)
+            test_predictions[name] = test_pred
+            
+            # پیش‌بینی لحظه‌ای (احتمال صعود)
+            prob_p = model.predict_proba(last_features)[0][1] 
+            
+            # --- ۲. امتیازدهی Confidence وزنی (P - 50%) ---
+            confidence_score = (prob_p - 0.5) * 100 # مثلا 0.65 -> +15, 0.45 -> -5
+            ensemble_score_total += confidence_score
+            
+            # ذخیره نتایج تک مدل
+            report["individual_results"][name] = {
+                'prob': round(prob_p * 100, 1),
+                'score': round(confidence_score, 1),
+                'msg': 'Buy' if confidence_score > 0 else 'Sell'
+            }
         
-        # 3. محاسبه اهمیت ویژگی‌ها (Feature Importance)
-        importances = dict(zip(feature_cols, model.feature_importances_))
-        report["importances"] = {k: round(v, 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
+        # --- ۳. محاسبه دقت واقعی Ensemble (رأی اکثریت) ---
+        majority_pred = (test_predictions['RF'] + test_predictions['XGB'] + test_predictions['LR']) > 1 
+        ensemble_accuracy = (majority_pred.astype(int) == Y_test).mean()
+        report["accuracy"] = round(ensemble_accuracy * 100, 2)
         
-        # 4. پیش‌بینی لحظه‌ای
-        prob = model.predict_proba(last_features)[0][1]
+        # محاسبه اهمیت ویژگی‌ها (فقط برای RF به عنوان نماینده)
+        if 'RF' in models:
+            importances = dict(zip(feature_cols, models['RF'].feature_importances_))
+            report["importances"] = {k: round(v, 3) for k, v in sorted(importances.items(), key=lambda item: item[1], reverse=True)}
+
+        # --- ۴. امتیاز نهایی Ensemble (نرمال‌سازی شده) ---
+        # حداکثر امتیاز خام: 150 (50*3) . نرمال‌سازی به حداکثر 5.0 (150/30 = 5)
+        ML_SCORE_NORMALIZER = 30.0 
+        ml_score = ensemble_score_total / ML_SCORE_NORMALIZER 
+
+        # تبدیل به پیام نهایی
+        final_prob_average = ensemble_score_total / (len(models) * 100) + 0.5 
         
-        ml_score = 0
-        if prob > 0.65: ml_score, report["message"] = 3, f"AI: صعود ({int(prob*100)}%) 🚀"
-        elif prob < 0.35: ml_score, report["message"] = -3, f"AI: نزول ({int((1-prob)*100)}%) 🔻"
-        else: report["message"] = f"AI: عدم قطعیت ({int(prob*100)}%)"
+        final_message = f"Ensemble: {round(final_prob_average * 100, 1)}%"
+        if final_prob_average > 0.6: final_message += " 🚀 Strong Buy"
+        elif final_prob_average < 0.4: final_message += " 🔻 Strong Sell"
+        else: final_message += " ⚪ Neutral"
+
+        report["ensemble_score"] = round(ensemble_score_total, 1)
+        report["ml_score_final"] = round(ml_score, 1)
+        report["message"] = final_message
 
         return ml_score, report
     
@@ -171,7 +206,7 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     return round(sl_base, 5), round(tp, 5)
 
 # =========================================================
-# MAIN ROUTE (بدون تغییر)
+# MAIN ROUTE 
 # =========================================================
 @app.route("/analyze", methods=["GET"])
 def analyze():
@@ -244,7 +279,7 @@ def analyze():
     if dist_to_sup < (atr * 0.5): score += 2
 
     score += div_score
-    score += ml_score
+    score += ml_score # اضافه شدن امتیاز وزنی و دقیق ML
     score += news_score
     
     if use_htf and htf_trend != "neutral":
