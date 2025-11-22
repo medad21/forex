@@ -1,7 +1,9 @@
 flask
 requests
 gunicorn
-numpy
 pandas
-pandas_ta
+pandas-ta
+numpy
 scikit-learn
+# مدل پیشرفته
+xgboost
