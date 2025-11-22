@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression 
 from xgboost import XGBClassifier 
 from sklearn.preprocessing import StandardScaler 
-from sklearn.utils import class_weight # 🔑 واردات جدید برای محاسبه وزن کلاس
+from sklearn.utils import class_weight 
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
@@ -23,6 +23,9 @@ API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg"
 
 TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
 LSTM_TIME_STEPS = 10 
+ML_CONFIDENCE_THRESHOLD = 1.0 # 🔑 جدید: آستانه اطمینان برای امتیاز AI (از ۴۰.۰)
+
+app = Flask(__name__)
 
 @app.route("/")
 def index():
@@ -127,31 +130,35 @@ def get_ml_prediction(df, size):
         "ensemble_score": 0, "ml_score_final": 0, "individual_results": {}
     }
     
-    # تعریف مدل‌ها با کلاس‌های وزن‌دار
-    # 🔑 LR و RF قابلیت مدیریت وزن کلاس‌ها را دارند
     models = {
-        # RF: از 'class_weight="balanced"' استفاده می‌کند
         'RF': RandomForestClassifier(n_estimators=100, min_samples_split=10, random_state=42, class_weight="balanced"),
-        # XGB: وزن‌ها را از طریق 'sample_weight' در متد fit دریافت می‌کند
         'XGB': XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1), 
-        # LR: از 'class_weight="balanced"' یا دیکشنری وزن استفاده می‌کند
         'LR': LogisticRegression(solver='liblinear', random_state=42, class_weight="balanced"),
         'LSTM': None 
     }
 
     try:
-        # Feature Engineering 
+        # Feature Engineering (ویژگی‌های پایه)
         df['Returns'] = df['close'].pct_change()
-        df['RSI'] = df.ta.rsi(length=14)
         df['ADX'] = df.ta.adx(length=14)[df.ta.adx(length=14).columns[0]]
-        df['EMA_Diff'] = df.ta.ema(length=20) - df.ta.ema(length=50)
         df['Volatility'] = df['high'] - df['low']
-        
         df['datetime'] = pd.to_datetime(df['datetime'])
         df['Hour'] = df['datetime'].dt.hour
         df['DayOfWeek'] = df['datetime'].dt.dayofweek
         df['HV_20'] = df['Returns'].rolling(window=20).std()
         df['ATR_Value'] = df.ta.atr(length=14) 
+        
+        # 🔑 گام ۱: ویژگی‌های چندزمانی شبیه‌سازی شده (Simulated MTF)
+        # دیدگاه سریع و کند برای RSI
+        df['RSI_14'] = df.ta.rsi(length=14)
+        df['RSI_6'] = df.ta.rsi(length=6) 
+        
+        # دیدگاه کوتاه‌مدت و بلندمدت برای روند (EMA)
+        df['EMA_20'] = df.ta.ema(length=20)
+        df['EMA_50'] = df.ta.ema(length=50)
+        df['EMA_100'] = df.ta.ema(length=100)
+        df['EMA_Diff_Fast'] = df['EMA_20'] - df['EMA_50']
+        df['EMA_Diff_Slow'] = df['EMA_50'] - df['EMA_100']
         
         # --- مهندسی هدف عملیاتی ---
         RISK_REWARD_ATR = 1.5
@@ -160,7 +167,9 @@ def get_ml_prediction(df, size):
 
         # تمیزکاری داده‌ها
         df = df[df['Target'] != -1]
-        feature_cols = ['RSI', 'ADX', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
+        
+        # 🔑 بروزرسانی feature_cols
+        feature_cols = ['RSI_14', 'RSI_6', 'ADX', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         df = df.dropna(subset=feature_cols + ['Target'])
 
         if len(df) < 50: 
@@ -175,36 +184,27 @@ def get_ml_prediction(df, size):
         X_scaled = scaler.fit_transform(X)
         X_scaled_df = pd.DataFrame(X_scaled, columns=feature_cols, index=X.index)
 
-        # --- آماده‌سازی داده‌ها برای LSTM و سایر مدل‌ها ---
-        
-        # 1. داده‌های 2D (برای RF, XGB, LR)
+        # --- آماده‌سازی داده‌ها ---
         test_size_2d = max(100, int(len(df) * 0.1)) 
         X_train_2d = X_scaled_df.iloc[:-test_size_2d]
         Y_train_2d = Y.iloc[:-test_size_2d]
         X_test_2d = X_scaled_df.iloc[-test_size_2d:-1]
         Y_test_2d = Y.iloc[-test_size_2d:-1]
         
-        # 🔑 محاسبه وزن کلاس‌ها برای مدیریت عدم توازن
-        # این وزن‌ها فقط برای مدل‌هایی که از طریق متد fit() وزن نمونه (sample_weight) می‌پذیرند، مورد نیاز است (مثل XGBoost)
+        # محاسبه وزن کلاس‌ها 
         class_weights = class_weight.compute_class_weight(
             class_weight='balanced',
             classes=np.unique(Y_train_2d),
             y=Y_train_2d
         )
         class_weights_dict = {0: class_weights[0], 1: class_weights[1]}
-        
-        # ساخت آرایه وزن برای هر نمونه در مجموعه آموزش (برای XGBoost)
         sample_weights_xgb = Y_train_2d.apply(lambda x: class_weights_dict[x]).values
         
-        # 2. داده‌های 3D (برای LSTM)
+        # داده‌های 3D (برای LSTM)
         X_lstm, Y_lstm = create_lstm_dataset(X_scaled_df, Y, LSTM_TIME_STEPS)
-        
-        if len(X_lstm) < 50 + LSTM_TIME_STEPS:
-            report["message"] = "AI: دیتای 3D کافی نیست"
-            return 0, report
+        if len(X_lstm) < 50 + LSTM_TIME_STEPS: return 0, report
             
         test_size_3d = max(100, int(len(X_lstm) * 0.1))
-        
         X_train_lstm = X_lstm[:-test_size_3d]
         Y_train_lstm = Y_lstm[:-test_size_3d]
         X_test_lstm = X_lstm[-test_size_3d:-1]
@@ -213,7 +213,6 @@ def get_ml_prediction(df, size):
         # داده ورودی نهایی
         last_features = X.iloc[-1].to_frame().T
         last_features_scaled_2d = scaler.transform(last_features) 
-
         last_window_data = X_scaled_df.iloc[-LSTM_TIME_STEPS:].values
         last_features_scaled_3d = last_window_data.reshape(1, LSTM_TIME_STEPS, len(feature_cols)) 
         
@@ -225,12 +224,9 @@ def get_ml_prediction(df, size):
         # --- آموزش و پیش‌بینی مدل‌های 2D (RF, XGB, LR) ---
         for name in ['RF', 'LR', 'XGB']:
             model = models[name]
-            
             if name == 'XGB':
-                # 🔑 اعمال وزن نمونه برای XGBoost
                 model.fit(X_train_2d, Y_train_2d, sample_weight=sample_weights_xgb)
             else:
-                # 🔑 LR و RF از class_weight="balanced" استفاده می‌کنند
                 model.fit(X_train_2d, Y_train_2d)
             
             test_pred = model.predict(X_test_2d)
@@ -254,10 +250,8 @@ def get_ml_prediction(df, size):
         lstm_model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
         models['LSTM'] = lstm_model
         
-        # 🔑 اعمال وزن کلاس برای LSTM (از دیکشنری وزن‌ها استفاده می‌شود)
         lstm_model.fit(X_train_lstm, Y_train_lstm, epochs=5, batch_size=32, verbose=0, class_weight=class_weights_dict)
         
-        # پیش‌بینی
         test_pred_lstm_prob = lstm_model.predict(X_test_lstm, verbose=0).flatten()
         test_pred_lstm = (test_pred_lstm_prob > 0.5).astype(int)
         test_predictions['LSTM'] = test_pred_lstm
@@ -272,7 +266,7 @@ def get_ml_prediction(df, size):
             'msg': 'Buy' if confidence_score_lstm > 0 else 'Sell'
         }
         
-        # --- محاسبه دقت Ensemble (با ۴ مدل) ---
+        # --- محاسبه دقت Ensemble ---
         min_test_size = min(len(Y_test_2d), len(Y_test_lstm))
         
         total_predictions = np.zeros(min_test_size)
@@ -306,8 +300,7 @@ def get_ml_prediction(df, size):
         return float(ml_score), report
     
     except Exception as e: 
-        # اگر خطا مربوط به TensorFlow/Keras باشد (نصب نشده باشد)
-        report["message"] = f"AI Error (Class Weighting/Model Training): {str(e)[:40]}..."
+        report["message"] = f"AI Error (MTF/Conf. Threshold): {str(e)[:40]}..."
         return 0, report
 
 # --- توابع کمکی (بدون تغییر) ---
@@ -341,7 +334,7 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     return round(float(sl_base), 5) if sl_base is not None else None, round(float(tp), 5) if tp is not None else None
 
 # =========================================================
-# MAIN ROUTE 
+# MAIN ROUTE (با Confidence Thresholding)
 # =========================================================
 @app.route("/analyze", methods=["GET"])
 def analyze():
@@ -356,6 +349,7 @@ def analyze():
     df = get_candles(symbol, interval, size=size)
     if df is None or df.empty: return jsonify({"error": "API Error"})
 
+    # محاسبه اندیکاتورهای مورد نیاز برای چک‌های دستی و ATR
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.rsi(length=14, append=True)
@@ -380,6 +374,7 @@ def analyze():
     ml_score, ml_report = get_ml_prediction(df, size) 
     news_score, news_text = get_market_sentiment(symbol)
     
+    # ... (بررسی تایم فریم بالاتر - بدون تغییر)
     htf_trend, htf_status = "neutral", "غیرفعال"
     if use_htf:
         htf_int = TIMEFRAME_MAP.get(interval)
@@ -396,6 +391,17 @@ def analyze():
 
     score = 0
     
+    # 🔑 گام ۲: اعمال Confidence Thresholding
+    # اگر امتیاز AI از آستانه اطمینان (ML_CONFIDENCE_THRESHOLD) کمتر بود، آن را نادیده بگیر.
+    if abs(ml_score) >= ML_CONFIDENCE_THRESHOLD:
+        score += ml_score
+    else:
+        # در این صورت پیام AI را به خنثی تغییر می‌دهیم
+        ml_report["ml_score_final"] = 0
+        ml_report["message"] = f"Ensemble: {round(ml_report['ensemble_score'] / 400 * 100 + 50, 1)}% ⚪ Neutral (Low Confidence)"
+
+
+    # --- محاسبه امتیاز سیگنال دستی/سنتی (بدون تغییر) ---
     if adx_val > 25: 
         score += 3 if trend == "uptrend" else -3
         score += 1 if macd_line > macd_sig else -1
@@ -410,7 +416,6 @@ def analyze():
     if dist_to_sup < (atr * 0.5): score += 2
 
     score += div_score
-    score += ml_score
     score += news_score
     
     if use_htf and htf_trend != "neutral":
