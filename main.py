@@ -11,28 +11,18 @@ import tensorflow as tf
 from flask import Flask, request, jsonify, render_template
 
 # ---------------------------------------------------------
-# ۱. پیکربندی، بارگذاری مدل‌ها و ابزارهای کمکی (GLOBAL)
+# ۱. پیکربندی و ابزارهای کمکی
 # ---------------------------------------------------------
 
 warnings.filterwarnings('ignore')
 
-# کلاس کمکی برای تبدیل خروجی NumPy به JSON استاندارد
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        elif isinstance(obj, np.floating): return float(obj)
-        elif isinstance(obj, np.ndarray): return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
-
 app = Flask(__name__)
-app.json_encoder = NumpyEncoder
 
-# 🔑 API KEYS - خواندن ایمن از متغیرهای محیطی
-API_KEY_TWELVEDATA = "83a502f14048493b9828008e86b2d0b5" 
+# 🔑 API KEYS (کلیدهای شما)
+API_KEY_TWELVEDATA = "df521019db9f44899bfb172fdce6b454" 
 API_KEY_ALPHA = "W1L3K1JN4F77T9KL"              
-API_KEY_FINNHUB = "d4gd4r9r01qm5b352il0d4gd4r9r01qm5b352ilg" 
 
-# 📊 پارامترها و تنظیمات
+# 📊 پارامترها
 RISK_REWARD_ATR = 1.5           
 TARGET_PERIODS = 5              
 ML_CONFIDENCE_THRESHOLD = 1.0   
@@ -41,13 +31,12 @@ LSTM_TIME_STEPS = 10
 TIMEFRAME_MAP = { "15min": "1h", "1h": "4h", "4h": "1day" }
 ML_SCORE_NORMALIZER = 40.0 
 
-# متغیرهای سراسری برای خروجی‌های آموزش (باید با داده‌های آفلاین پر شوند)
-GLOBAL_RF_IMPORTANCES = {"RSI_14": 0.25, "ADX": 0.2, "EMA_Diff_Fast": 0.15} # مثال
+# متغیرهای سراسری
+GLOBAL_RF_IMPORTANCES = {"RSI_14": 0.25, "ADX": 0.2, "EMA_Diff_Fast": 0.15} 
 GLOBAL_TEST_ACCURACY = "N/A (Offline Training Required)"
 
-# 🧠 بارگذاری مدل‌ها و Scaler فقط یک بار در زمان راه‌اندازی
+# 🧠 بارگذاری مدل‌ها
 try:
-    # ⚠️ مسیرها را چک کنید: models/lstm_model.h5
     lstm_model = tf.keras.models.load_model('models/lstm_model.h5')
     rf_model = joblib.load('models/rf_model.pkl')
     lr_model = joblib.load('models/lr_model.pkl')
@@ -60,16 +49,32 @@ except Exception as e:
     print(f"❌ WARNING: Failed to load models. Running in basic mode. Error: {e}")
 
 # ---------------------------------------------------------
-# ۲. توابع کمکی (Helper Functions) - منطق پیشرفته شما
+# ۲. توابع کمکی (Helper Functions)
 # ---------------------------------------------------------
 
-# دریافت دیتا
+# 🛠️ تابع حیاتی جدید: تبدیل داده‌های NumPy به فرمت استاندارد JSON
+def convert_to_serializable(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(i) for i in obj]
+    return obj
+
 def get_candles(symbol, interval, size=2000):
+    # دریافت داده از API
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={size}"
     try:
         response = requests.get(url, timeout=10)
         data = response.json()
-        if "values" not in data: return None
+        if "values" not in data: 
+            print(f"API Error Response: {data}") # لاگ خطا برای دیباگ
+            return None
         df = pd.DataFrame(data["values"])
         for c in ['open', 'high', 'low', 'close']: df[c] = pd.to_numeric(df[c])
         df = df.iloc[::-1].reset_index(drop=True)
@@ -79,7 +84,6 @@ def get_candles(symbol, interval, size=2000):
         print(f"Data fetch error: {e}")
         return None
 
-# تابع محاسبه Actionable Target
 def check_target(row, df_full, periods, rr_atr):
     idx = row.name
     current_close = row['close']
@@ -106,7 +110,6 @@ def check_target(row, df_full, periods, rr_atr):
             
     return -1
 
-# محاسبه واگرایی
 def check_divergence(df):
     if 'RSI_14' not in df.columns: df.ta.rsi(length=14, append=True)
     subset = df.iloc[-15:].reset_index(drop=True)
@@ -125,7 +128,6 @@ def check_divergence(df):
         
     return score, msg
 
-# دریافت سنتیمنت بازار
 def get_market_sentiment(symbol):
     sentiment_score = 0
     sentiment_text = "اخبار خنثی (بدون رویداد مهم)"
@@ -145,7 +147,6 @@ def get_market_sentiment(symbol):
     except: pass
     return sentiment_score, sentiment_text
 
-# محاسبه هوشمند SL و TP
 def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
     if atr is None or np.isnan(atr) or atr == 0: return None, None
     rr = 2.0 
@@ -155,7 +156,6 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
         if support != 0 and (entry - support) < (atr * 2.0): sl_base = min(sl_base, support)
         tp = entry + ((entry - sl_base) * rr)
         sl = sl_base
-        
     elif signal == "sell":
         sl_base = entry + (atr * 1.5)
         if resistance != 0 and (resistance - entry) < (atr * 2.0): sl_base = max(sl_base, resistance)
@@ -163,11 +163,8 @@ def calculate_smart_sl_tp(entry, signal, atr, support, resistance):
         sl = sl_base
     else:
         return None, None
-        
     return round(float(sl), 5) if sl is not None else None, round(float(tp), 5) if tp is not None else None
 
-
-# محاسبه تمام اندیکاتورها و هدف عملیاتی
 def calculate_indicators_and_targets(df):
     df['Returns'] = df['close'].pct_change()
     
@@ -196,60 +193,51 @@ def calculate_indicators_and_targets(df):
     df['DCL'] = df.get(next((c for c in df.columns if c.startswith('DCL')), ''), 0)
     df['DCU'] = df.get(next((c for c in df.columns if c.startswith('DCU')), ''), 0)
     
-    # Target برای بک‌تست لازم است اما در اینجا برای ساختار حفظ شده
+    # Target (فقط برای سازگاری ساختار)
     df['Target'] = df.apply(check_target, axis=1, args=(df, TARGET_PERIODS, RISK_REWARD_ATR)) 
 
     return df.dropna().reset_index(drop=True)
 
-# *** تابع استنتاج (Prediction) - بازنویسی شده برای پایداری ***
 def get_ml_prediction_inference(df_full):
     report = {"ensemble_score": 0, "ml_score_final": 0, "individual_results": {}, "message": "AI: خنثی"}
 
     if not GLOBAL_MODELS_LOADED:
-        report["message"] = "AI: مدل‌ها بارگذاری نشدند. (Global Load Failed)"
+        report["message"] = "AI: مدل‌ها بارگذاری نشدند."
         return 0, report
 
     try:
-        # ۱. آماده‌سازی داده (باید دقیقاً مشابه زمان آموزش باشد)
         feature_cols = ['RSI_14', 'RSI_6', 'ADX', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         
         if len(df_full) < LSTM_TIME_STEPS:
-            report["message"] = "AI: دیتای کافی برای پنجره LSTM وجود ندارد."
+            report["message"] = "AI: دیتای کافی نیست."
             return 0, report
 
-        # داده‌های 2D (برای RF, XGB, LR)
         last_data_2d = df_full.iloc[-1].to_frame().T[feature_cols]
         X_scaled_2d = scaler.transform(last_data_2d)
         
-        # داده‌های 3D (برای LSTM)
         X_scaled_window = scaler.transform(df_full.iloc[-LSTM_TIME_STEPS:][feature_cols])
         X_scaled_3d = X_scaled_window.reshape(1, LSTM_TIME_STEPS, len(feature_cols))
 
         ensemble_score_total = 0
         
-        # ۲. پیش‌بینی مدل‌های 2D
         for name, model in [('RF', rf_model), ('LR', lr_model), ('XGB', xgb_model)]:
             prob_p = model.predict_proba(X_scaled_2d)[0][1] 
             confidence_score = (prob_p - 0.5) * 100 
             ensemble_score_total += confidence_score
             report["individual_results"][name] = round(confidence_score, 1)
             
-        # ۳. پیش‌بینی مدل 3D (LSTM)
         prob_p_lstm = lstm_model.predict(X_scaled_3d, verbose=0)[0][0]
         confidence_score_lstm = (prob_p_lstm - 0.5) * 100
         ensemble_score_total += confidence_score_lstm
         report["individual_results"]["LSTM"] = round(confidence_score_lstm, 1)
 
-        # محاسبه امتیاز نهایی Ensemble
         ml_score = ensemble_score_total / (4 * ML_SCORE_NORMALIZER) 
-        
         report["ensemble_score"] = float(round(ensemble_score_total, 1))
         report["ml_score_final"] = float(round(ml_score, 2))
         
-        # پیام نهایی بر اساس امتیاز
         confidence_percent = round((ensemble_score_total / 400 * 50) + 50, 1) 
         if abs(ml_score) < ML_CONFIDENCE_THRESHOLD:
-            report["message"] = f"Ensemble: {confidence_percent}% ⚪ Neutral (Low Confidence)"
+            report["message"] = f"Ensemble: {confidence_percent}% ⚪ Neutral"
         else:
             signal = "Bullish 🟢" if ml_score > 0 else "Bearish 🔴"
             report["message"] = f"Ensemble: {confidence_percent}% {signal}"
@@ -257,17 +245,16 @@ def get_ml_prediction_inference(df_full):
         return ml_score, report
 
     except Exception as e:
-        report["message"] = f"AI Inference Error: Check Data/Scaler Compatibility ({str(e)[:50]}...)"
-        print(f"FATAL AI INFERENCE ERROR: {e}")
+        report["message"] = f"AI Error: {str(e)[:50]}"
+        print(f"FATAL AI ERROR: {e}")
         return 0, report
 
 # ---------------------------------------------------------
-# ۳. مسیرهای Flask (ROUTES)
+# ۳. مسیرهای Flask
 # ---------------------------------------------------------
 
 @app.route("/", methods=["GET"])
 def index():
-    """مسیر ریشه: بارگذاری فرانت‌اند HTML."""
     return render_template("index.html")
 
 @app.route("/analyze", methods=["GET"])
@@ -281,15 +268,13 @@ def analyze():
         if df_raw is None or df_raw.empty: return jsonify({"error": "API Error: Could not fetch market data."}), 500
         
         df = calculate_indicators_and_targets(df_raw.copy()) 
-        if df.empty or len(df) < 50: return jsonify({"error": "Not enough processed data for analysis (min 50)."}), 500
+        if df.empty or len(df) < 50: return jsonify({"error": "Not enough data (min 50)."}), 500
         
-        # فراخوانی تابع استنتاج AI
         ml_score, ml_report = get_ml_prediction_inference(df.copy())
         
         last = df.iloc[-1]
         price = float(last['close'])
         
-        # داده‌های اندیکاتور
         rsi = float(last['RSI_14'])
         atr = float(last['ATR_Value'])
         ema20 = float(last['EMA_20'])
@@ -301,17 +286,15 @@ def analyze():
         
         adx_val = float(last['ADX'])
         regime = "Ranging (رنج)"
-        if adx_val > 25: regime = "Trending (رونددار)"
-        if adx_val > 50: regime = "Strong Trend (روند قوی)"
+        if adx_val > 25: regime = "Trending"
+        if adx_val > 50: regime = "Strong Trend"
         
         support = float(last['DCL'])
         resistance = float(last['DCU'])
         
-        # ۴. محاسبه امتیازدهی دستی
         div_score, div_msg = check_divergence(df)
         news_score, news_text = get_market_sentiment(symbol)
         
-        # تأییدیه تایم بالا (HTF)
         htf_trend, htf_status, htf_score = "neutral", "غیرفعال", 0
         if use_htf:
             htf_int = TIMEFRAME_MAP.get(interval)
@@ -328,11 +311,8 @@ def analyze():
                     if trend == htf_trend: htf_score = 2
                     else: htf_score = -1
 
-        # ۵. محاسبه امتیاز نهایی (AI + دستی)
         score = 0
         current_ml_score = ml_score
-        
-        # فیلتر اطمینان AI
         if abs(ml_score) < ML_CONFIDENCE_THRESHOLD:
             current_ml_score = 0
 
@@ -356,16 +336,14 @@ def analyze():
         score += news_score 
         score += htf_score 
 
-        # ۶. سیگنال نهایی
         final_signal = "neutral"
         if score >= SIGNAL_SCORE_THRESHOLD: final_signal = "buy"
         elif score <= -SIGNAL_SCORE_THRESHOLD: final_signal = "sell"
 
-        # ۷. محاسبه SL/TP هوشمند
         sl, tp = calculate_smart_sl_tp(price, final_signal, atr, support, resistance)
         
-        # ۸. خروجی نهایی JSON
-        return jsonify({
+        # آماده‌سازی پاسخ نهایی
+        response_data = {
             "symbol": symbol,
             "interval": interval,
             "price": price,
@@ -392,36 +370,24 @@ def analyze():
                     "importances": GLOBAL_RF_IMPORTANCES,
                 }, 
             }
-        })
+        }
+
+        # ✅ استفاده از تابع تبدیل برای رفع خطای JSON
+        return jsonify(convert_to_serializable(response_data))
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"Internal Error during Analysis: {str(e)}", "status": 500}), 500
-
-# ---------------------------------------------------------
-# ۴. غیرفعال‌سازی مسیرهای سنگین برای پایداری
-# ---------------------------------------------------------
 
 @app.route("/backtest", methods=["GET"])
 def backtest_route():
-    """مسیر بک‌تست: غیرفعال شده برای پایداری سرور."""
-    return jsonify({
-        "status": "⚠️ Error: Backtest is Disabled on Live Server.", 
-        "reason": "Training and Backtesting are resource-intensive tasks and must be run offline (locally) to maintain server stability.",
-        "solution": "Run your backtesting script locally or upgrade to a high-memory/GPU-enabled server."
-    }), 501 
+    return jsonify({"status": "⚠️ Backtest Disabled on Server"}), 501 
 
 @app.route("/optimize", methods=["GET"])
 def optimize_route():
-    """مسیر بهینه‌سازی: غیرفعال شده برای پایداری سرور."""
-    return jsonify({
-        "status": "⚠️ Error: Optimization is Disabled on Live Server.",
-        "reason": "Optimization requires training and backtesting hundreds of times, which consumes too many resources and will crash the server.",
-        "solution": "Run your optimization script locally or upgrade to a high-memory/GPU-enabled server."
-    }), 501 
+    return jsonify({"status": "⚠️ Optimization Disabled on Server"}), 501 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-
-
