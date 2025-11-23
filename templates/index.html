@@ -12,233 +12,339 @@
         .meter-container { width: 100%; height: 12px; background: #334155; border-radius: 6px; position: relative; overflow: hidden; }
         .meter-fill { height: 100%; position: absolute; transition: all 0.8s; }
         .meter-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; opacity: 0.5; }
-        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; }
-        .v-grid { display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; padding: 1rem; }
-        @media (max-width: 1024px) { .v-grid { grid-template-columns: 1fr; } #chart-container { height: 500px; } }
-        .skeleton { animation: pulse 1.5s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
-        @keyframes pulse { 50% { opacity: .5; } }
-        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; }
-        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 4px 0; }
+        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        .data-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px dashed #334155; }
+        .data-row:last-child { border-bottom: none; }
+        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.875rem; padding: 0.2rem 0; }
+        .skeleton { animation: pulse 1.5s infinite; background-color: #334155; border-radius: 4px; color: transparent !important; user-select: none; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
-<body>
+<body class="p-4 md:p-8">
 
-<div class="v-grid min-h-screen">
-    <div class="card p-4 h-fit flex flex-col gap-3">
-        <div class="flex justify-between items-center border-b border-slate-700 pb-3">
-            <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
-                💎 Pro Trader Ultimate 6.0 (Ensemble)
-            </h2>
-            <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
-        </div>
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-sky-400">Pro Trader AI 6.0</h1>
+            <p class="text-slate-400 mt-2">سامانه تحلیل لحظه‌ای بازار با مدل‌های یادگیری عمیق (Ensemble)</p>
+        </header>
 
-        <div class="grid grid-cols-3 gap-2">
+        <!-- بخش ورودی‌ها -->
+        <div class="card p-6 mb-8 grid grid-cols-2 md:grid-cols-5 gap-4 items-end">
+            <!-- نماد -->
             <div>
-                <label class="text-[10px] text-slate-400 block mb-1">نماد</label>
-                <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                    <option value="EUR/USD">EUR/USD</option>
-                    <option value="GBP/USD">GBP/USD</option>
-                    <option value="XAU/USD">XAU/USD</option>
-                    <option value="BTC/USD">BTC/USD</option>
+                <label for="symbol" class="block text-sm font-medium text-slate-300 mb-1">نماد (Symbol):</label>
+                <select id="symbol" class="w-full p-2.5 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:ring-sky-500 focus:border-sky-500">
+                    <option value="EUR/USD" selected>EUR/USD</option>
+                    <option value="BTC/USD">BTC/USD (Crypto)</option>
+                    <option value="XAU/USD">XAU/USD (Gold)</option>
+                    <option value="AAPL">AAPL (Stock)</option>
+                    <option value="GOOG">GOOG (Stock)</option>
                 </select>
             </div>
+            
+            <!-- تایم‌فریم -->
             <div>
-                <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
-                <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                    <option value="15min">15 Min</option>
-                    <option value="1h" selected>1 Hour</option>
-                    <option value="4h">4 Hour</option>
+                <label for="interval" class="block text-sm font-medium text-slate-300 mb-1">تایم‌فریم (Interval):</label>
+                <select id="interval" class="w-full p-2.5 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:ring-sky-500 focus:border-sky-500">
+                    <option value="15min">15 دقیقه</option>
+                    <option value="1h" selected>1 ساعت</option>
+                    <option value="4h">4 ساعت</option>
+                    <option value="1day">1 روز</option>
                 </select>
             </div>
+
+            <!-- تعداد کندل‌ها -->
             <div>
-                <label class="text-[10px] text-slate-400 block mb-1">تعداد کندل‌ها</label>
-                <input type="number" id="candle-size" value="2000" min="100" max="2500" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center">
-            </div>
-        </div>
-
-        <div class="flex gap-2">
-            <div class="flex-1 bg-slate-800 p-2 rounded flex justify-between items-center border border-slate-700">
-                <span class="text-[10px]">تاییدیه تایم بالا</span>
-                <input type="checkbox" id="use-htf" class="accent-blue-500">
-            </div>
-            <div class="flex-1 bg-slate-800 p-2 rounded flex justify-between items-center border border-slate-700">
-                <span class="text-[10px]">Live</span>
-                <input type="checkbox" id="auto-refresh" class="accent-green-500" onchange="toggleAutoRefresh()">
-            </div>
-        </div>
-
-        <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm">
-            آنالیز کامل (Ensemble AI) ⚡
-        </button>
-
-        <div id="results" class="hidden flex flex-col gap-3">
-            <div id="signal-box" class="text-center p-3 rounded-xl font-black text-xl border-2 bg-slate-800">---</div>
-            
-            <div>
-                <div class="meter-container"><div class="meter-marker"></div><div id="score-fill" class="meter-fill bg-slate-500" style="width: 0; left: 50%"></div></div>
-                <div class="text-center mt-1 text-[10px] font-mono text-yellow-400" id="score-text">Score: 0</div>
+                <label for="data_size" class="block text-sm font-medium text-slate-300 mb-1">تعداد کندل‌ها (Size):</label>
+                <input type="number" id="data_size" value="2000" min="100" max="5000" class="w-full p-2.5 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:ring-sky-500 focus:border-sky-500"/>
             </div>
 
-            <div class="bg-blue-900/20 border border-blue-500/30 p-2 rounded shadow-md">
-                <div class="text-[10px] text-blue-300 block mb-1">📰 اخبار (Sentiment):</div>
-                <p id="news-val" class="text-xs text-slate-200 leading-relaxed">---</p>
-            </div>
-            
-            <div class="grid grid-cols-2 gap-2">
-                <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-purple-300">هوش مصنوعی (Ensemble)</div>
-                    <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
-                </div>
-                <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-orange-300">رژیم بازار (ADX)</div>
-                    <div id="regime-val" class="text-[10px] font-bold text-white mt-1">---</div>
+            <!-- HTF Checkbox -->
+            <div class="md:col-span-1">
+                <div class="flex items-center space-x-2 space-x-reverse h-full mb-1">
+                    <input type="checkbox" id="use_htf" checked class="h-5 w-5 text-sky-600 bg-slate-700 border-slate-600 rounded focus:ring-sky-500">
+                    <label for="use_htf" class="text-sm font-medium text-slate-300 whitespace-nowrap">تحلیل HTF</label>
                 </div>
             </div>
 
-            <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
-                <div class="flex justify-between items-center mb-2">
-                    <p class="text-xs font-bold text-purple-300">گزارش عملکرد Ensemble AI</p>
-                    <span id="ensemble-score-raw" class="font-mono text-[10px] bg-slate-700 px-2 rounded">Score: 0</span>
+            <!-- دکمه تحلیل -->
+            <button onclick="runAnalysis()" class="col-span-2 md:col-span-1 px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-lg shadow-lg transition duration-150" id="analyze-button">
+                تحلیل کن
+            </button>
+        </div>
+        
+        <!-- پیام وضعیت / خطا -->
+        <div id="status-message" class="card p-4 mb-8 hidden" role="alert">
+            <p id="status-text" class="text-sm font-medium text-center text-red-400"></p>
+        </div>
+
+        <!-- داشبورد تحلیل -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- ستون ۱: نتیجه اصلی و سیگنال -->
+            <div class="lg:col-span-2 card p-6">
+                <h2 class="text-xl font-semibold text-sky-400 mb-4">نتیجه تحلیل اجماع AI</h2>
+                <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                    <span class="text-xl text-slate-400">قیمت لحظه‌ای:</span>
+                    <span id="price-val" class="text-3xl font-mono font-bold text-yellow-300 skeleton">1.08500</span>
                 </div>
                 
-                <div class="stat-row">
-                    <span class="text-slate-400">دقت واقعی (Test Accuracy)</span>
-                    <span id="ml-accuracy-val" class="font-mono text-green-400 font-bold">---</span>
-                </div>
-                <div class="stat-row">
-                    <span class="text-slate-400">اهمیت ویژگی‌ها (RF)</span>
-                    <span id="ml-importance-val" class="font-mono text-xs text-yellow-400">---</span>
+                <!-- سیگنال نهایی -->
+                <div class="text-center p-6 rounded-lg mb-6" id="signal-box">
+                    <!-- هوش مصنوعی (Ensemble) - Score: 0 -->
+                    <p class="text-4xl font-extrabold" id="signal-text">Neutral</p>
+                    <!-- گزارش عملکرد Ensemble AI -->
+                    <p class="text-lg mt-2" id="ai-message">در انتظار تحلیل...</p>
                 </div>
 
-                <div class="mt-3 border-t border-slate-700 pt-2">
-                    <p class="text-[10px] text-slate-500 mb-1">جزئیات رأی‌گیری مدل‌ها:</p>
-                    <div id="ml-individual-results">
-                        <div class="ml-detail-row skeleton"><span class="text-slate-400">RF (Prob)</span><span class="font-mono">---</span></div>
+                <!-- امتیاز اجماع AI -->
+                <div class="mb-6">
+                    <p class="text-slate-300 mb-2">امتیاز اجماع AI (Score):</p>
+                    <div class="meter-container">
+                        <div class="meter-fill" id="meter-fill"></div>
+                        <div class="meter-marker"></div>
+                    </div>
+                    <div class="flex justify-between text-sm mt-1">
+                        <span class="text-red-400">-10 (فروش قوی)</span>
+                        <span class="text-green-400">+10 (خرید قوی)</span>
+                    </div>
+                    <p class="text-center text-lg font-bold mt-2" id="ai-val">0.0</p>
+                </div>
+
+                <!-- مدیریت ریسک -->
+                <h3 class="text-lg font-semibold text-slate-300 mt-6 mb-3 border-b border-slate-700 pb-2">مدیریت ریسک (R/R: 1.5)</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="card p-3">
+                        <p class="text-sm text-slate-400">حد ضرر (Stop Loss)</p>
+                        <p id="sl-val" class="text-xl font-mono text-red-400 skeleton mt-1">0.00000</p>
+                    </div>
+                    <div class="card p-3">
+                        <p class="text-sm text-slate-400">حد سود (Take Profit)</p>
+                        <p id="tp-val" class="text-xl font-mono text-green-400 skeleton mt-1">0.00000</p>
                     </div>
                 </div>
+                <p class="text-sm text-slate-400 mt-3 text-center" id="sr-levels-val">سطوح S/R: N/A</p>
+
             </div>
 
-            <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-                <div class="stat-row"><span class="text-slate-400">قیمت</span><span id="price-val" class="font-mono font-bold text-yellow-400">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">روند (Trend)</span><span id="trend-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">MACD Status</span><span id="macd-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">تاییدیه تایم بالا</span><span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span></div>
-                <div class="stat-row"><span class="text-slate-400">واگرایی</span><span id="div-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">RSI</span><span id="rsi-val" class="font-mono">---</span></div>
-            </div>
+            <!-- ستون ۲: جزئیات اندیکاتور و AI -->
+            <div class="card p-6">
+                <h2 class="text-xl font-semibold text-sky-400 mb-4">جزئیات فنی</h2>
 
-            <div class="grid grid-cols-2 gap-2">
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-green-500"><span class="text-[10px] text-slate-400">TP</span><div id="tp-val" class="font-mono font-bold text-sm">---</div></div>
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-red-500"><span class="text-[10px] text-slate-400">SL</span><div id="sl-val" class="font-mono font-bold text-sm">---</div></div>
+                <div class="space-y-3">
+                    <div class="data-row">
+                        <span class="text-slate-300">وضعیت روند (EMA)</span>
+                        <span id="trend-val" class="text-green-400 skeleton">Uptrend</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="text-slate-300">HTF (بالاتر)</span>
+                        <span id="htf-status-val" class="text-slate-400 text-sm skeleton">Active: Bullish (4h)</span>
+                    </div>
+                    <div class="data-row">
+                        <!-- رژیم بازار (ADX) -->
+                        <span class="text-slate-300">رژیم بازار (ADX)</span>
+                        <span id="regime-val" class="text-slate-400 skeleton">Strong Trend</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="text-slate-300">RSI (قدرت نسبی)</span>
+                        <span id="rsi-val" class="text-slate-300 skeleton">75.0</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="text-slate-300">MACD Crossover</span>
+                        <span id="macd-val" class="text-red-400 skeleton">Bearish</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="text-slate-300">واگرایی (Divergence)</span>
+                        <span id="div-val" class="text-yellow-400 skeleton">N/A (Advanced)</span>
+                    </div>
+                    <div class="data-row">
+                        <!-- 📰 اخبار (Sentiment) -->
+                        <span class="text-slate-300">📰 اخبار (Sentiment)</span>
+                        <span id="news-val" class="text-slate-400 text-sm skeleton">No real-time news</span>
+                    </div>
+                </div>
+                
+                <h3 class="text-lg font-semibold text-slate-300 mt-6 mb-3 border-b border-slate-700 pb-2">جزئیات رأی‌گیری مدل‌ها</h3>
+                <div id="ml-individual-results" class="space-y-1">
+                    <!-- نتایج مدل‌ها اینجا قرار می‌گیرند -->
+                    <div class="ml-detail-row"><span class="text-slate-400 skeleton">RF (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+                    <div class="ml-detail-row"><span class="text-slate-400 skeleton">LSTM (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-300 mt-6 mb-3 border-b border-slate-700 pb-2">قابلیت اعتماد AI</h3>
+                <div class="space-y-3">
+                    <div class="data-row">
+                        <!-- دقت واقعی (Test Accuracy) -->
+                        <span class="text-slate-300">دقت واقعی (Test Accuracy)</span>
+                        <span id="ml-accuracy-val" class="text-sky-400 skeleton">N/A</span>
+                    </div>
+                    <div class="data-row">
+                        <!-- اهمیت ویژگی‌ها (RF) -->
+                        <span class="text-slate-300">اهمیت ویژگی‌ها (RF)</span>
+                        <span id="ml-importance-val" class="text-slate-400 text-sm skeleton">---</span>
+                    </div>
+                </div>
+
             </div>
         </div>
+
     </div>
-    
-    <div id="chart-container" class="card h-[90vh] overflow-hidden rounded-xl"></div>
-</div>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
+    <footer class="text-center mt-12 text-sm text-slate-500">
+        <p>Copyright &copy; 2024 Pro Trader AI. Developed on Railway.</p>
+    </footer>
+
 <script>
-    const intervalMap = { "15min": "15", "1h": "60", "4h": "240" };
-    let refreshTimer = null; let countdownTimer = null;
-    window.onload = () => loadChart("EUR/USD", "1h");
-
-    function syncChartOnly() { 
-        const s = document.getElementById("symbol").value; 
-        loadChart(s, document.getElementById("interval").value);
-        if(document.getElementById("auto-refresh").checked) runAnalysis();
-    }
-
-    function loadChart(symbol, intervalKey) {
-        let tvSymbol = "FX_IDC:" + symbol.replace("/", "");
-        if(symbol.includes("BTC")) tvSymbol = "BINANCE:BTCUSDT";
-        else if(symbol.includes("XAU")) tvSymbol = "FX_IDC:XAUUSD";
-        new TradingView.widget({ "autosize": true, "symbol": tvSymbol, "interval": intervalMap[intervalKey], "timezone": "Asia/Tehran", "theme": "dark", "style": "1", "container_id": "chart-container", "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies"] });
-    }
-
-    function toggleAutoRefresh() {
-        const isChecked = document.getElementById("auto-refresh").checked;
-        const badge = document.getElementById("timer-badge");
-        if (isChecked) {
-            runAnalysis(); let seconds = 60; badge.classList.add("text-green-400");
-            refreshTimer = setInterval(() => runAnalysis(), 60000);
-            countdownTimer = setInterval(() => { seconds--; if(seconds <= 0) seconds = 60; badge.innerText = `Next: ${seconds}s`; }, 1000);
-        } else { clearInterval(refreshTimer); clearInterval(countdownTimer); badge.innerText = "00:00"; badge.classList.remove("text-green-400"); }
-    }
+    document.addEventListener('DOMContentLoaded', () => {
+        applySkeleton(true);
+        // به صورت پیش‌فرض تحلیل انجام نمی‌شود تا کاربر دکمه را فشار دهد.
+    });
 
     async function runAnalysis() {
-        const btn = document.getElementById("btn-analyze");
-        btn.disabled = true; btn.innerHTML = "⏳ تحلیل Ensemble AI و 2000 کندل...";
-        document.getElementById("results").classList.remove("hidden");
-        if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
+        const symbol = document.getElementById('symbol').value;
+        const interval = document.getElementById('interval').value;
+        const useHtf = document.getElementById('use_htf').checked;
+        const dataSize = document.getElementById('data_size').value; 
+        
+        const statusDiv = document.getElementById('status-message');
+        const statusText = document.getElementById('status-text');
+        const analyzeButton = document.getElementById('analyze-button');
+
+        statusDiv.classList.add('hidden');
+        statusText.innerText = '';
+        applySkeleton(true);
+        analyzeButton.disabled = true;
+        analyzeButton.innerText = 'در حال تحلیل...';
+
+
+        const payload = {
+            symbol: symbol,
+            interval: interval,
+            use_htf: useHtf.toString(), 
+            size: parseInt(dataSize)
+        };
+        
+        if (isNaN(payload.size) || payload.size < 100) {
+            statusText.innerText = 'تعداد کندل‌ها باید یک عدد و حداقل ۱۰۰ باشد.';
+            statusDiv.classList.remove('hidden');
+            applySkeleton(false);
+            analyzeButton.disabled = false;
+            analyzeButton.innerText = 'تحلیل کن';
+            return;
+        }
+
         try {
-            const useHtf = document.getElementById("use-htf").checked;
-            const size = document.getElementById("candle-size").value; 
-            const res = await fetch(`/analyze?symbol=${document.getElementById("symbol").value}&interval=${document.getElementById("interval").value}&use_htf=${useHtf}&size=${size}`);
-            const data = await res.json();
-            if(data.error) { console.error(data); return; }
-            renderData(data);
-        } catch (e) { console.error(e); } 
-        finally { btn.disabled = false; btn.innerHTML = "آنالیز کامل (Ensemble AI) ⚡"; applySkeleton(false); }
+            const response = await fetch('/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                let errorMessage = `خطای HTTP ${response.status} (${response.statusText}):`;
+
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    errorMessage = `خطای سرور: ${errorJson.error || response.statusText}`;
+                } catch (e) {
+                    errorMessage += ` سرور یک پاسخ غیر JSON برگرداند. (آدرس API یا متد POST را چک کنید)`;
+                }
+
+                throw new Error(errorMessage);
+            }
+
+            const data = await response.json();
+            updateDashboard(data);
+
+        } catch (error) {
+            console.error("Analysis Error:", error);
+            statusText.innerText = `تحلیل شکست خورد: ${error.message}`;
+            statusDiv.classList.remove('hidden');
+        } finally {
+            applySkeleton(false);
+            analyzeButton.disabled = false;
+            analyzeButton.innerText = 'تحلیل کن';
+        }
     }
 
-    function renderData(data) {
-        // Score & Signal
-        const fill = document.getElementById("score-fill");
-        let pct = 50 + (data.score * 5); pct = Math.max(5, Math.min(95, pct));
-        fill.style.left = data.score < 0 ? `${pct}%` : "50%"; fill.style.width = `${Math.abs(pct - 50)}%`;
-        fill.className = `meter-fill ${data.score > 0 ? 'bg-green-500' : (data.score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
-        document.getElementById("score-text").innerText = `Score: ${data.score}`;
+    function updateDashboard(data) {
+        // به‌روزرسانی قیمت و نماد
+        document.getElementById('price-val').innerText = `${data.price.toFixed(5)} (${data.symbol})`;
+        document.getElementById('ai-val').innerText = data.indicators.ai_report.ml_score_final.toFixed(1);
+
+        // به‌روزرسانی سیگنال و استایل جعبه (هوش مصنوعی (Ensemble) - Score: 0)
+        const signalBox = document.getElementById('signal-box');
+        const signalText = document.getElementById('signal-text');
+        const score = data.indicators.ai_report.ml_score_final;
+        let signalClass = 'bg-slate-700';
+        let signalMsg = data.indicators.ai_report.message;
         
-        const box = document.getElementById("signal-box");
-        if(data.signal === "buy") { box.innerHTML = "🟢 خرید (BUY)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
-        else if(data.signal === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
-        else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
+        if (data.signal === 'buy') {
+            signalClass = 'bg-green-700/50 border-2 border-green-500';
+        } else if (data.signal === 'sell') {
+            signalClass = 'bg-red-700/50 border-2 border-red-500';
+        } else {
+            signalMsg = `خنثی (${data.indicators.ai_report.message})`;
+        }
 
-        // Core Data & Risk
-        document.getElementById("price-val").innerText = data.price;
-        document.getElementById("tp-val").innerText = data.setup.tp || "-";
-        document.getElementById("sl-val").innerText = data.setup.sl || "-";
-        document.getElementById("sr-val").innerText = data.indicators.sr_levels;
+        signalBox.className = `text-center p-6 rounded-lg mb-6 ${signalClass}`;
+        signalText.innerText = data.signal.toUpperCase();
         
-        // News
-        document.getElementById("news-val").innerText = data.indicators.news;
+        // گزارش عملکرد Ensemble AI
+        document.getElementById('ai-message').innerText = signalMsg;
 
-        // Indicators
-        const trendEl = document.getElementById("trend-val");
-        trendEl.innerText = data.indicators.trend;
-        trendEl.className = data.indicators.trend.includes("صعودی") ? "font-bold text-green-400" : "font-bold text-red-400";
+        // به‌روزرسانی متر (Meter)
+        const meterFill = document.getElementById('meter-fill');
+        const scoreNormalized = (score + 10) / 20; // تبدیل امتیاز -10 تا +10 به 0 تا 1
+        meterFill.style.width = `${scoreNormalized * 100}%`;
+        
+        let meterColor;
+        if (score > 5) meterColor = 'linear-gradient(90deg, #16a34a, #4ade80)'; // Strong Buy
+        else if (score >= 1) meterColor = '#4ade80'; // Weak Buy
+        else if (score < -5) meterColor = 'linear-gradient(90deg, #dc2626, #f87171)'; // Strong Sell
+        else if (score <= -1) meterColor = '#f87171'; // Weak Sell
+        else meterColor = '#64748b'; // Neutral
+        meterFill.style.background = meterColor;
 
-        const macdEl = document.getElementById("macd-val");
-        macdEl.innerText = data.indicators.macd;
-        macdEl.className = data.indicators.macd.includes("Bullish") ? "font-bold text-green-400" : "font-bold text-red-400";
 
-        document.getElementById("rsi-val").innerText = data.indicators.rsi;
-        document.getElementById("regime-val").innerText = data.indicators.regime;
-        document.getElementById("div-val").innerText = data.indicators.divergence;
+        // به‌روزرسانی مدیریت ریسک و سطوح SR
+        document.getElementById('sl-val').innerText = data.setup.sl > 0 ? data.setup.sl.toFixed(5) : '---';
+        document.getElementById('tp-val').innerText = data.setup.tp > 0 ? data.setup.tp.toFixed(5) : '---';
+        document.getElementById('sr-levels-val').innerText = `سطوح S/R: ${data.indicators.sr_levels}`;
 
-        // HTF Status
-        const htfEl = document.getElementById("htf-val");
-        htfEl.innerText = data.indicators.htf_status;
-        const htfColor = data.indicators.htf_trend === "uptrend" ? "text-green-400" : (data.indicators.htf_trend === "downtrend" ? "text-red-400" : "text-slate-400");
-        htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfColor}`;
 
-        // Ensemble ML Prediction and Report
-        document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
-        document.getElementById("ml-accuracy-val").innerText = data.indicators.ai_report.accuracy !== 0 ? `${data.indicators.ai_report.accuracy}%` : 'N/A';
-        document.getElementById("ensemble-score-raw").innerText = `امتیاز خام: ${data.indicators.ai_report.ensemble_score}`;
+        // به‌روزرسانی جزئیات فنی
+        document.getElementById('trend-val').innerText = data.indicators.trend;
+        document.getElementById('regime-val').innerText = data.indicators.regime;
+        document.getElementById('rsi-val').innerText = data.indicators.rsi.toFixed(1);
+        document.getElementById('macd-val').innerText = data.indicators.macd;
+        document.getElementById('div-val').innerText = data.indicators.divergence;
+        
+        // 📰 اخبار (Sentiment)
+        document.getElementById('news-val').innerText = data.indicators.news;
+        
+        const htfVal = data.indicators.htf_status.startsWith('Active') ? 
+                        `${data.indicators.htf_trend} (${data.indicators.htf_status.split(' ')[1].replace(':', '')})` : 
+                        data.indicators.htf_status;
+        document.getElementById('htf-status-val').innerText = htfVal;
 
-        // Feature Importance
+        // دقت واقعی (Test Accuracy)
+        document.getElementById('ml-accuracy-val').innerText = data.indicators.ai_report.accuracy;
+        
+        // اهمیت ویژگی‌ها (RF)
         const importanceData = data.indicators.ai_report.importances;
         let importanceText = '---';
         if (Object.keys(importanceData).length > 0) {
-            const topFeatures = Object.entries(importanceData).slice(0, 2).map(([key, value]) => `${key}: ${value}`);
+            // نمایش ۳ ویژگی مهم
+            const topFeatures = Object.entries(importanceData).slice(0, 3).map(([key, value]) => `${key}: ${value}`);
             importanceText = topFeatures.join(' | ');
         }
         document.getElementById("ml-importance-val").innerText = importanceText;
 
-        // Individual Model Results
+        // جزئیات رأی‌گیری مدل‌ها (Individual Model Results)
         const individualResults = data.indicators.ai_report.individual_results;
         const container = document.getElementById("ml-individual-results");
         container.innerHTML = '';
@@ -249,7 +355,7 @@
             
             const html = `
                 <div class="ml-detail-row">
-                    <span class="text-slate-400">${key} (Prob / Score)</span>
+                    <span class="text-slate-400">${key} (احتمال / امتیاز)</span>
                     <span class="font-mono ${color}">${value.prob}% (${sign}${value.score})</span>
                 </div>
             `;
@@ -258,7 +364,43 @@
 
     }
 
-    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val", "ml-accuracy-val", "ml-importance-val", "ensemble-score-raw"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
+    function applySkeleton(active) {
+        const ids = ["price-val", "trend-val", "rsi-val", "macd-val", "tp-val", "sl-val", "news-val", "ai-val", "div-val", "regime-val", "ml-accuracy-val", "ml-importance-val", "signal-text", "ai-message", "htf-status-val", "sr-levels-val"];
+        ids.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                if (active) {
+                    element.classList.add('skeleton');
+                } else {
+                    element.classList.remove('skeleton');
+                }
+            }
+        });
+        
+        // تنظیمات اسکلتون برای Individual Results
+        const resultsContainer = document.getElementById("ml-individual-results");
+        if (active) {
+            resultsContainer.innerHTML = `
+                <div class="ml-detail-row"><span class="text-slate-400 skeleton">RF (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+                <div class="ml-detail-row"><span class="text-slate-400 skeleton">LR (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+                <div class="ml-detail-row"><span class="text-slate-400 skeleton">XGB (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+                <div class="ml-detail-row"><span class="text-slate-400 skeleton">LSTM (احتمال / امتیاز)</span><span class="font-mono text-slate-400 skeleton">+0.0</span></div>
+            `;
+        } else if (resultsContainer.children.length > 0 && resultsContainer.children[0].querySelector('.skeleton')) {
+            resultsContainer.innerHTML = ''; // فقط در صورتی پاک می‌شود که هنوز حالت اسکلتون فعال باشد
+        }
+
+        // تنظیمات اسکلتون برای Signal Box
+        const signalBox = document.getElementById('signal-box');
+        if (active) {
+            signalBox.className = 'text-center p-6 rounded-lg mb-6 bg-slate-700';
+            document.getElementById('signal-text').innerText = 'Loading...';
+            document.getElementById('ai-message').innerText = 'در حال دریافت و تحلیل داده‌ها...';
+            document.getElementById('meter-fill').style.width = '50%';
+            document.getElementById('meter-fill').style.background = '#64748b';
+
+        }
+    }
 </script>
 </body>
 </html>
