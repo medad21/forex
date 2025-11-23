@@ -163,6 +163,7 @@ def process_data(df):
     if df is None or df.empty: return df
     
     try:
+        # اندیکاتورها
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.ema(length=100, append=True)
@@ -173,11 +174,11 @@ def process_data(df):
         df.ta.macd(append=True)
         df.ta.donchian(lower_length=20, upper_length=20, append=True)
         
-        # ✅ تعمیر نام ستون‌ها (جلوگیری از ارور ATR_14)
+        # ✅ تعمیر نام ستون‌ها
         if 'ATRr_14' in df.columns: df['ATR_14'] = df['ATRr_14']
         if 'ADX_14' not in df.columns and 'ADX' in df.columns: df['ADX_14'] = df['ADX']
         
-        # پر کردن ستون‌های حیاتی اگر تولید نشدند (ضد کرش)
+        # پر کردن ستون‌های حیاتی اگر تولید نشدند (ضد کرش ATR_14)
         required_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'ATR_14', 'EMA_20', 'EMA_50', 'EMA_100']
         for col in required_cols:
             if col not in df.columns: df[col] = 0 
@@ -185,10 +186,12 @@ def process_data(df):
         df['DCL'] = df.get('DCL_20_20', df['low'])
         df['DCU'] = df.get('DCU_20_20', df['high'])
 
+        # ویژگی‌ها
         df['Returns'] = df['close'].pct_change()
         df['Volatility'] = (df['high'] - df['low']) / df['close']
-        df['EMA_Diff_Fast'] = (df['EMA_20'] - df['EMA_50']) / df['close']
-        df['EMA_Diff_Slow'] = (df['EMA_50'] - df['EMA_100']) / df['close']
+        # از .get() استفاده می‌کنیم تا اگر EMAها نبودند کرش نکند
+        df['EMA_Diff_Fast'] = (df.get('EMA_20', 0) - df.get('EMA_50', 0)) / df['close']
+        df['EMA_Diff_Slow'] = (df.get('EMA_50', 0) - df.get('EMA_100', 0)) / df['close']
         df['Hour'] = df['datetime'].dt.hour
         df['DayOfWeek'] = df['datetime'].dt.dayofweek
         df['HV_20'] = df['Returns'].rolling(20).std()
@@ -207,7 +210,6 @@ def get_ml_prediction(df):
     try:
         feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
         
-        # بررسی نهایی وجود ستون‌ها
         for col in feature_cols:
             if col not in df.columns: df[col] = 0
             
@@ -243,7 +245,7 @@ def get_ml_prediction(df):
 
 def calculate_sl_tp(price, signal, atr, dcl, dcu):
     try:
-        if not atr: return 0, 0
+        if not atr or atr == 0: return 0, 0
         sl, tp = 0, 0
         if signal == 'buy': sl = max(dcl, price - (RISK_REWARD_ATR * atr)); tp = price + (RISK_REWARD_ATR * (price - sl))
         elif signal == 'sell': sl = min(dcu, price + (RISK_REWARD_ATR * atr)); tp = price - (RISK_REWARD_ATR * (sl - price))
@@ -268,6 +270,8 @@ def get_sentiment(symbol):
 
 def check_divergence(df):
     if len(df) < 20: return 0, "---"
+    if 'RSI_14' not in df.columns: return 0, "--- (RSI Missing)"
+
     price = df['close'].values; rsi = df['RSI_14'].values
     score = 0; msg = "No Divergence"
     try:
@@ -296,24 +300,35 @@ def analyze():
         use_htf = str(data.get("use_htf")).lower() == 'true'
         size = int(data.get("size", 2000))
         
-        # دریافت دیتا
+        # 1. دریافت دیتا
         df = get_candles(symbol, interval, size)
         
         # اگر دیتا کلا نیامد
         if df is None or len(df) < 50: 
-            return jsonify({"error": "Could not fetch data from any source (TwelveData/YF/DB)"}), 500
+            return jsonify({"error": "Could not fetch data from any source (TwelveData/YF/DB). Check symbol/interval or API keys."}), 500
             
-        # پردازش
+        # 2. پردازش و محاسبه اندیکاتورها
         df = process_data(df)
+        
+        # 🛑🛑🛑 3. بررسی ایمنی جدید: اگر DataFrame بعد از محاسبات خالی شد 🛑🛑🛑
+        if df.empty:
+            # این ارور جدید از کرش df.iloc[-1] جلوگیری می‌کند
+            return jsonify({"error": "Data not clean. Too few candles available or too many NaN values after indicator calculation."}), 500
+
         last = df.iloc[-1]
         
         # هوش مصنوعی
         ml_score, ml_report = get_ml_prediction(df)
         score = ml_score
         
+        # دسترسی ایمن به ستون‌ها (جهت جلوگیری از ATR_14 KeyError)
+        current_atr = last.get('ATR_14', 0)
+        current_dcl = last.get('DCL', last['low'])
+        current_dcu = last.get('DCU', last['high'])
+        
         # تحلیل تکنیکال
-        trend = "Uptrend" if last['EMA_20'] > last['EMA_50'] else "Downtrend"
-        rsi = last['RSI_14']; adx = last['ADX_14']
+        trend = "Uptrend" if last.get('EMA_20', 0) > last.get('EMA_50', 0) else "Downtrend"
+        rsi = last.get('RSI_14', 50); adx = last.get('ADX_14', 0)
         
         if trend == "Uptrend": score += 1
         else: score -= 1
@@ -331,7 +346,7 @@ def analyze():
             if df_htf is not None:
                 df_htf = process_data(df_htf)
                 htf_last = df_htf.iloc[-1]
-                htf_trend = "Bullish" if htf_last['close'] > htf_last['EMA_50'] else "Bearish"
+                htf_trend = "Bullish" if htf_last.get('EMA_20', 0) > htf_last.get('EMA_50', 0) else "Bearish"
                 htf_status = f"Active: {htf_trend} ({htf_int})"
                 if (htf_trend == "Bullish" and trend == "Uptrend") or (htf_trend == "Bearish" and trend == "Downtrend"): score += 2
                 else: score -= 2
@@ -340,18 +355,19 @@ def analyze():
         if score >= SIGNAL_SCORE_THRESHOLD: signal = "buy"
         elif score <= -SIGNAL_SCORE_THRESHOLD: signal = "sell"
         
-        sl, tp = calculate_sl_tp(last['close'], signal, last['ATR_14'], last['DCL'], last['DCU'])
+        # محاسبه SL/TP با استفاده از ATR ایمن
+        sl, tp = calculate_sl_tp(last['close'], signal, current_atr, current_dcl, current_dcu)
         
         response = {
             "symbol": symbol, "price": last['close'], "signal": signal,
             "score": round(score, 1),
             "setup": {"sl": sl, "tp": tp},
             "indicators": {
-                "rsi": last['RSI_14'], "trend": trend,
-                "macd": "Bullish" if last['MACD_12_26_9'] > last['MACDs_12_26_9'] else "Bearish",
+                "rsi": rsi, "trend": trend,
+                "macd": "Bullish" if last.get('MACD_12_26_9', 0) > last.get('MACDs_12_26_9', 0) else "Bearish",
                 "adx": adx, "regime": "Trending" if adx > 25 else "Ranging",
                 "news": news_msg, "htf_status": htf_status, "htf_trend": htf_trend,
-                "sr_levels": f"S: {round(last['DCL'], 4)} | R: {round(last['DCU'], 4)}",
+                "sr_levels": f"S: {round(current_dcl, 4)} | R: {round(current_dcu, 4)}",
                 "divergence": div_msg,
                 "ai_report": {
                     "message": ml_report["message"],
@@ -366,6 +382,7 @@ def analyze():
     except Exception as e:
         print("❌ CRITICAL SERVER ERROR:")
         traceback.print_exc()
+        # ارور دقیق را برای فرانت می‌فرستیم
         return jsonify({"error": f"Server Logic Error: {str(e)}"}), 500
 
 if __name__ == "__main__":
