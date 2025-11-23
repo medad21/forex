@@ -3,15 +3,13 @@ requests==2.31.0
 gunicorn==21.2.0
 psycopg2-binary==2.9.9
 SQLAlchemy==2.0.25
-
-#Packages without pinned versions for automatic compatibility resolution
-
 pandas
 numpy
 pandas-ta
 scikit-learn
 xgboost
-tensorflow
 yfinance
+tensorflow-cpu
+
 
 
