@@ -12,6 +12,6 @@ pandas-ta
 scikit-learn
 xgboost
 tensorflow
-
+yfinance
 
 
