@@ -3,13 +3,13 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 # -----------------------------------------------------
-# 1. تعریف آدرس اتصال با 3 اولویت
+# 1. تعریف آدرس اتصال با 3 اولویت و تمیزکاری
 # -----------------------------------------------------
 
 DB_URL = None
 raw_url = None
 
-# --- اولویت 1: بازسازی از متغیرهای PG* (بهترین روش، اما در حال حاضر شکست خورد) ---
+# --- اولویت 1: بازسازی از متغیرهای PG* ---
 user = os.environ.get("PGUSER")
 password = os.environ.get("PGPASSWORD")
 host = os.environ.get("PGHOST")
@@ -18,22 +18,43 @@ database = os.environ.get("PGDATABASE")
 
 if user and password and host and port and database:
     raw_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-    print("✅ PostgreSQL URL constructed from PG* variables.")
+    print("✅ PostgreSQL URL constructed from PG* variables (Method 1).")
 
-# --- اولویت 2: استفاده از متغیرهای استاندارد Railway (DATABASE_URL یا PUBLIC_URL) ---
+# --- اولویت 2: استفاده از متغیرهای استاندارد Railway ---
 if not raw_url:
     raw_url = os.environ.get("DATABASE_URL")
-    if raw_url:
-        print("✅ PostgreSQL URL read from DATABASE_URL.")
-    else:
+    if not raw_url:
         raw_url = os.environ.get("DATABASE_PUBLIC_URL")
-        if raw_url:
-            print("✅ PostgreSQL URL read from DATABASE_PUBLIC_URL.")
+    
+    if raw_url:
+        print("✅ PostgreSQL URL read from DATABASE_URL/PUBLIC_URL (Method 2).")
 
-# --- تصمیم گیری نهایی ---
+
+# --- تصمیم گیری نهایی و تصحیح پروتکل ---
 if raw_url:
-    # اصلاح پروتکل برای سازگاری با SQLAlchemy
-    DB_URL = raw_url.replace("postgres://", "postgresql://", 1)
+    # 🛑 1. تمیزکاری رشته از فضاهای خالی و کاراکترهای مخفی (بسیار مهم)
+    raw_url = raw_url.strip() 
+    
+    # 🛑 2. اصلاح پروتکل برای سازگاری کامل با SQLAlchemy و psycopg2
+    # حذف پروتکل postgres:// و جایگزینی با postgresql://
+    if raw_url.startswith("postgres://"):
+        DB_URL = raw_url.replace("postgres://", "postgresql://", 1)
+    
+    # اگر پروتکل قبلاً به درستی postgresql:// بود، آن را نگه می داریم.
+    elif raw_url.startswith("postgresql://"):
+        DB_URL = raw_url
+    
+    # اگر هیچ پروتکلی نداشت، آن را به عنوان یک URL خام در نظر می گیریم.
+    else:
+        DB_URL = raw_url
+
+    # 🛑 3. (FIX FOR YOUR SPECIFIC ERROR) رفع خطای Railway Corruption
+    # اگر رشته اتصال حاوی یک پروتکل خراب شده مانند "railwaypostgresql://" باشد،
+    # تمام بخش اضافه قبل از اولین "postgresql://" را حذف می کنیم.
+    if DB_URL and "postgresql://" in DB_URL and DB_URL.index("postgresql://") > 0:
+        DB_URL = DB_URL[DB_URL.index("postgresql://"):]
+        print("⚠️ Corrupted URL prefix fixed successfully.")
+
     print(f"🔗 Attempting connection to PostgreSQL.")
 else:
     # ⚠️ فال‌بک نهایی به SQLite
@@ -46,9 +67,11 @@ else:
 # 2. ساخت موتور اتصال
 # -----------------------------------------------------
 try:
+    # موتور اتصال را با آدرس نهایی می سازیم
     engine = create_engine(DB_URL)
 except Exception as e:
     print(f"❌ Error creating DB engine: {e}. Falling back to SQLite...")
+    # فال‌بک نهایی در صورت کرش موتور
     engine = create_engine("sqlite:///market_data.db")
 
 
@@ -77,7 +100,9 @@ def init_db():
             conn.commit()
         print("✅ Database table initialized successfully.")
     except Exception as e:
-        print(f"❌ Database Initialization Error: {e}")
+        # این خطا فقط باید برای PostgreSQL نمایش داده شود
+        if 'sqlite' not in engine.url.drivername:
+            print(f"❌ Database Initialization Error: {e}")
 
 def save_candles(df, symbol, interval):
     """ذخیره کندل‌ها در دیتابیس"""
@@ -93,10 +118,13 @@ def save_candles(df, symbol, interval):
         df.rename(columns={'index': 'datetime', 'Date': 'datetime'}, inplace=True)
     
     try:
+        # تنظیم متد ذخیره‌سازی بر اساس نوع دیتابیس (برای سرعت بالاتر در Postgres)
         method = 'multi' if 'postgresql' in engine.url.drivername else None
+        
         df.to_sql('candles', engine, if_exists='append', index=False, chunksize=500, method=method)
+
     except Exception as e:
-        # نادیده گرفتن خطای تکراری بودن دیتا
+        # نادیده گرفتن خطای تکراری بودن دیتا (برای PostgreSQL و SQLite)
         if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower() or "UNIQUE constraint" in str(e).lower():
             pass 
         else:
@@ -106,6 +134,7 @@ def save_candles(df, symbol, interval):
 def get_all_candles(symbol, interval):
     """خواندن تمام کندل‌های ذخیره شده"""
     try:
+        # کوئری ایمن با پارامترها
         query = text("SELECT * FROM candles WHERE symbol=:sym AND interval=:inv ORDER BY datetime ASC")
         
         with engine.connect() as conn:
@@ -115,7 +144,8 @@ def get_all_candles(symbol, interval):
             df['datetime'] = pd.to_datetime(df['datetime'])
         return df
     except Exception as e:
-        print(f"❌ DB Read Error: {e}")
+        if 'sqlite' not in engine.url.drivername:
+            print(f"❌ DB Read Error: {e}")
         return pd.DataFrame()
 
 # اجرای اولیه برای ساخت جدول
