@@ -1,7 +1,14 @@
 import os
 import pandas as pd
 from sqlalchemy import create_engine, text
+raw_url = os.environ.get("DATABASE_URL")
+# خط تست را اضافه کنید:
+if raw_url:
+    print("✅ DATABASE_URL is read. Length:", len(raw_url))
+else:
+    print("❌ DATABASE_URL is None or empty in the Python environment.")
 
+# ... ادامه کد شما
 # 1. دریافت و تمیزسازی آدرس دیتابیس
 raw_url = os.environ.get("DATABASE_URL")
 
