@@ -3,31 +3,41 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 # -----------------------------------------------------
-# 1. تعریف آدرس اتصال با اولویت PostgreSQL (بازسازی از اجزا)
+# 1. تعریف آدرس اتصال با 3 اولویت
 # -----------------------------------------------------
 
-# تلاش برای خواندن متغیرهای PG* که در Railway تضمین شده‌اند (PGUSER, PGPASSWORD, PGHOST, PGPORT, PGDATABASE)
+DB_URL = None
+raw_url = None
+
+# --- اولویت 1: بازسازی از متغیرهای PG* (بهترین روش، اما در حال حاضر شکست خورد) ---
 user = os.environ.get("PGUSER")
 password = os.environ.get("PGPASSWORD")
 host = os.environ.get("PGHOST")
 port = os.environ.get("PGPORT")
 database = os.environ.get("PGDATABASE")
 
-DB_URL = None
-
 if user and password and host and port and database:
-    # 💡 ساخت آدرس اتصال PostgreSQL از اجزای PG*
-    # استفاده از postgresql:// به جای postgres:// برای سازگاری کامل با SQLAlchemy
     raw_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-    
-    # اگر Railway از پروتکل قدیمی استفاده کند، آن را اصلاح می‌کنیم
+    print("✅ PostgreSQL URL constructed from PG* variables.")
+
+# --- اولویت 2: استفاده از متغیرهای استاندارد Railway (DATABASE_URL یا PUBLIC_URL) ---
+if not raw_url:
+    raw_url = os.environ.get("DATABASE_URL")
+    if raw_url:
+        print("✅ PostgreSQL URL read from DATABASE_URL.")
+    else:
+        raw_url = os.environ.get("DATABASE_PUBLIC_URL")
+        if raw_url:
+            print("✅ PostgreSQL URL read from DATABASE_PUBLIC_URL.")
+
+# --- تصمیم گیری نهایی ---
+if raw_url:
+    # اصلاح پروتکل برای سازگاری با SQLAlchemy
     DB_URL = raw_url.replace("postgres://", "postgresql://", 1)
-    
-    print("✅ PostgreSQL Connection URL successfully constructed from PG* variables.")
-    print("⚠️ Please ensure the 'psycopg2-binary' package is installed in your requirements.txt.")
+    print(f"🔗 Attempting connection to PostgreSQL.")
 else:
     # ⚠️ فال‌بک نهایی به SQLite
-    print("❌ Cannot find PGUSER/PGPASSWORD/etc. Falling back to local SQLite.")
+    print("❌ All PostgreSQL variables are missing. Falling back to local SQLite.")
     DB_URL = "sqlite:///market_data.db"
     print("⚠️ Local SQLite used. Data will be lost on server restart!")
 
@@ -39,12 +49,11 @@ try:
     engine = create_engine(DB_URL)
 except Exception as e:
     print(f"❌ Error creating DB engine: {e}. Falling back to SQLite...")
-    # فال‌بک نهایی در صورت کرش موتور
     engine = create_engine("sqlite:///market_data.db")
 
 
 # -----------------------------------------------------
-# 3. توابع دیتابیس
+# 3. توابع دیتابیس (بدون تغییر)
 # -----------------------------------------------------
 
 def init_db():
@@ -84,13 +93,10 @@ def save_candles(df, symbol, interval):
         df.rename(columns={'index': 'datetime', 'Date': 'datetime'}, inplace=True)
     
     try:
-        # تنظیم متد ذخیره‌سازی بر اساس نوع دیتابیس (برای سرعت بالاتر در Postgres)
         method = 'multi' if 'postgresql' in engine.url.drivername else None
-        
         df.to_sql('candles', engine, if_exists='append', index=False, chunksize=500, method=method)
-
     except Exception as e:
-        # نادیده گرفتن خطای تکراری بودن دیتا (برای PostgreSQL و SQLite)
+        # نادیده گرفتن خطای تکراری بودن دیتا
         if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower() or "UNIQUE constraint" in str(e).lower():
             pass 
         else:
@@ -100,7 +106,6 @@ def save_candles(df, symbol, interval):
 def get_all_candles(symbol, interval):
     """خواندن تمام کندل‌های ذخیره شده"""
     try:
-        # کوئری ایمن با پارامترها
         query = text("SELECT * FROM candles WHERE symbol=:sym AND interval=:inv ORDER BY datetime ASC")
         
         with engine.connect() as conn:
