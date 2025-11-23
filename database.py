@@ -4,17 +4,26 @@ from sqlalchemy import create_engine, text
 from urllib.parse import urlparse # 🛑 ماژول حیاتی برای پارس کردن ایمن URL
 
 # -----------------------------------------------------
-# 1. تعریف آدرس اتصال با 3 اولویت و تفکیک اجزا
+# 1. تعریف آدرس اتصال با 4 اولویت
 # -----------------------------------------------------
 
 DB_URL = None
 raw_url = None
+database_url_candidate = None
 
-# --- اولویت 1: استفاده از DATABASE_PUBLIC_URL یا DATABASE_URL (و پارس قوی) ---
-# اولویت را به آدرس عمومی می دهیم، زیرا در Railway کمتر دچار مشکل می شود
-database_url_candidate = os.environ.get("DATABASE_PUBLIC_URL")
+# --- اولویت 1: متغیر دستی تزریق شده FINAL_DB_URL (تضمین کننده اتصال) ---
+database_url_candidate = os.environ.get("FINAL_DB_URL")
+if database_url_candidate:
+    print("✅ PostgreSQL URL read from FINAL_DB_URL (Manual Override).")
+
+# --- اولویت 2: DATABASE_PUBLIC_URL (اگر تزریق دستی انجام نشده بود) ---
+if not database_url_candidate:
+    database_url_candidate = os.environ.get("DATABASE_PUBLIC_URL")
+
+# --- اولویت 3: DATABASE_URL (آدرس داخلی که مشکل ایجاد می کند) ---
 if not database_url_candidate:
     database_url_candidate = os.environ.get("DATABASE_URL")
+
 
 if database_url_candidate:
     try:
@@ -22,7 +31,6 @@ if database_url_candidate:
         url_parts = urlparse(database_url_candidate)
         
         # 🛑 ساخت URL تمیز با پروتکل صحیح (postgresql://) از اجزای جدا شده
-        # url_parts.path شامل نام دیتابیس است (مانند /railway)
         raw_url = "postgresql://{user}:{password}@{host}:{port}{path}".format(
             user=url_parts.username,
             password=url_parts.password,
@@ -30,13 +38,13 @@ if database_url_candidate:
             port=url_parts.port,
             path=url_parts.path 
         )
-        print("✅ PostgreSQL URL components parsed and reconstructed (Railway URL).")
+        print("✅ PostgreSQL URL components parsed and reconstructed.")
 
     except Exception as e:
-        print(f"❌ Failed to parse Railway DATABASE_URL: {e}. Falling back...")
+        print(f"❌ Failed to parse DATABASE_URL: {e}. Falling back...")
         raw_url = None 
 
-# --- اولویت 2: بازسازی از متغیرهای PG* (اگر پارس Railway شکست خورده باشد) ---
+# --- اولویت 4: بازسازی از متغیرهای PG* ---
 if not raw_url:
     user = os.environ.get("PGUSER")
     password = os.environ.get("PGPASSWORD")
@@ -46,13 +54,12 @@ if not raw_url:
 
     if user and password and host and port and database:
         raw_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-        print("✅ PostgreSQL URL constructed from PG* variables (Method 2).")
+        print("✅ PostgreSQL URL constructed from PG* variables (Method 4).")
 
 
 # --- تصمیم گیری نهایی ---
 if raw_url:
     DB_URL = raw_url
-    # فقط بخشی از URL را برای لاگ نمایش می دهیم تا اطلاعات حساس لو نرود
     print(f"🔗 Attempting connection to PostgreSQL with final URL: {DB_URL[:40]}...") 
 else:
     # ⚠️ فال‌بک نهایی به SQLite
@@ -97,6 +104,7 @@ def init_db():
         print("✅ Database table initialized successfully.")
     except Exception as e:
         if 'sqlite' not in engine.url.drivername:
+            # این خطا در نهایت به شما نشان می دهد که آیا اتصال با آدرس جدید موفق بوده یا خیر
             print(f"❌ Database Initialization Error: {e}")
 
 def save_candles(df, symbol, interval):
@@ -113,13 +121,11 @@ def save_candles(df, symbol, interval):
         df.rename(columns={'index': 'datetime', 'Date': 'datetime'}, inplace=True)
     
     try:
-        # تنظیم متد ذخیره‌سازی بر اساس نوع دیتابیس (برای سرعت بالاتر در Postgres)
         method = 'multi' if 'postgresql' in engine.url.drivername else None
         
         df.to_sql('candles', engine, if_exists='append', index=False, chunksize=500, method=method)
 
     except Exception as e:
-        # نادیده گرفتن خطای تکراری بودن دیتا (برای PostgreSQL و SQLite)
         if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower() or "UNIQUE constraint" in str(e).lower():
             pass 
         else:
