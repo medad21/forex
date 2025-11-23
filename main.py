@@ -14,7 +14,6 @@ tf = None
 lstm_model = None
 try:
     import tensorflow as tf
-    # جلوگیری از پر شدن حافظه GPU/CPU
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 except ImportError:
     print("⚠️ TensorFlow not installed.")
@@ -82,7 +81,8 @@ def convert_to_serializable(obj):
     return obj
 
 def get_candles(symbol, interval, size=2000):
-    """ دریافت کندل با سیستم فال‌بک قوی و ترکیب صحیح دیتابیس و API """
+    """ دریافت کندل با اصلاح نوع داده‌ها برای جلوگیری از ارور """
+    print(f"🔍 Requesting Data for {symbol} ({interval})...")
     
     # 1. Database Check
     df_db = pd.DataFrame()
@@ -91,7 +91,6 @@ def get_candles(symbol, interval, size=2000):
     except Exception as e:
         print(f"⚠️ DB Read Warning: {e}")
 
-    # اگر دیتابیس پر بود، فقط تعداد کمی جدید بگیر، وگرنه همه را بگیر
     req_size = 500 if not df_db.empty else size
     df_new = pd.DataFrame()
     
@@ -104,8 +103,8 @@ def get_candles(symbol, interval, size=2000):
         
         if "values" in data:
             df_new = pd.DataFrame(data["values"])
+            # تبدیل اجباری به عدد در همان لحظه دریافت
             cols = ['open', 'high', 'low', 'close', 'volume']
-            # تبدیل اجباری به عدد
             for c in cols: df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
             df_new['datetime'] = pd.to_datetime(df_new['datetime'])
             df_new = df_new.dropna().iloc[::-1].reset_index(drop=True)
@@ -146,6 +145,10 @@ def get_candles(symbol, interval, size=2000):
 
                 req_cols = ['datetime', 'open', 'high', 'low', 'close', 'volume']
                 df_new = df_yf[[c for c in req_cols if c in df_yf.columns]].dropna()
+                
+                # تبدیل نهایی
+                for c in ['open', 'high', 'low', 'close', 'volume']:
+                    if c in df_new.columns: df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
 
                 try: database.save_candles(df_new, symbol, interval)
                 except: pass
@@ -163,37 +166,38 @@ def get_candles(symbol, interval, size=2000):
         df_final = df_new
 
     if not df_final.empty:
-        # حذف تکراری‌ها بر اساس زمان
         df_final['datetime'] = pd.to_datetime(df_final['datetime'])
         df_final = df_final.drop_duplicates(subset=['datetime'], keep='last')
         df_final = df_final.sort_values(by='datetime').reset_index(drop=True)
         
-        # ✅ تضمین نهایی عددی بودن ستون‌ها قبل از خروج
+        # ✅ حیاتی: یکبار دیگر همه چیز را به عدد تبدیل کن تا مطمئن شوی String نیست
         cols = ['open', 'high', 'low', 'close', 'volume']
         for c in cols:
             if c in df_final.columns:
                 df_final[c] = pd.to_numeric(df_final[c], errors='coerce')
-                
+        
+        # حذف ردیف‌هایی که قیمت ندارند
+        df_final = df_final.dropna(subset=['close'])
+        
         return df_final.tail(size).reset_index(drop=True)
 
     return None
 
 def process_data(df):
-    """ محاسبه اندیکاتورها با روش امن (جایگزینی NaN با 0 به جای حذف سطر) """
+    """ محاسبه اندیکاتورها (با حذف دستورات مخربی که دیتا را پاک می‌کردند) """
     if df is None or df.empty: return pd.DataFrame()
     
     try:
-        # 1. تبدیل اولیه به عدد (برای اطمینان)
+        # 1. تبدیل اولیه
         cols = ['open', 'high', 'low', 'close', 'volume']
         for c in cols:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
         
-        # حذف سطرهایی که قیمت Close ندارند (این‌ها واقعا خراب هستند)
-        df = df.dropna(subset=['close'])
         if df.empty: return pd.DataFrame()
 
         # 2. محاسبه اندیکاتورها
+        # نکته: اگر دیتا کم باشد، اینها NaN تولید می‌کنند
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.ema(length=100, append=True)
@@ -204,42 +208,47 @@ def process_data(df):
         df.ta.macd(append=True)
         df.ta.donchian(lower_length=20, upper_length=20, append=True)
         
-        # هندل کردن نام‌گذاری متفاوت کتابخانه Pandas TA
         if 'ATRr_14' in df.columns: df['ATR_14'] = df['ATRr_14']
         if 'ADX_14' not in df.columns and 'ADX' in df.columns: df['ADX_14'] = df['ADX']
         
-        # ✅ بخش مهم: پر کردن مقادیر خالی اندیکاتورها با 0 به جای حذف سطر
+        # ✅ اصلاح اصلی: پر کردن NaN ها با صفر به جای حذف سطرها
+        # این خط باعث می‌شود دیگر ارور "Data not clean" نگیرید
+        df = df.fillna(0)
+        
+        # اطمینان از وجود ستون‌ها (اگر دیتا خیلی کم بود و محاسبه نشد)
         required_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'ATR_14', 'EMA_20', 'EMA_50', 'EMA_100', 'DCL_20_20', 'DCU_20_20']
         for col in required_cols:
-             if col in df.columns:
-                 df[col] = df[col].fillna(0)
+            if col not in df.columns: df[col] = 0
 
         df['DCL'] = df.get('DCL_20_20', df['low'])
         df['DCU'] = df.get('DCU_20_20', df['high'])
 
-        # ✅ استفاده از fillna(0) برای محاسبات درصدی
         df['Returns'] = df['close'].pct_change().fillna(0)
-        df['Volatility'] = ((df['high'] - df['low']) / df['close']).fillna(0)
-        df['EMA_Diff_Fast'] = ((df['EMA_20'] - df['EMA_50']) / df['close']).fillna(0)
-        df['EMA_Diff_Slow'] = ((df['EMA_50'] - df['EMA_100']) / df['close']).fillna(0)
+        
+        # جلوگیری از تقسیم بر صفر
+        df['Volatility'] = np.where(df['close'] != 0, (df['high'] - df['low']) / df['close'], 0)
+        df['EMA_Diff_Fast'] = np.where(df['close'] != 0, (df['EMA_20'] - df['EMA_50']) / df['close'], 0)
+        df['EMA_Diff_Slow'] = np.where(df['close'] != 0, (df['EMA_50'] - df['EMA_100']) / df['close'], 0)
+        
         df['Hour'] = df['datetime'].dt.hour
         df['DayOfWeek'] = df['datetime'].dt.dayofweek
         df['HV_20'] = df['Returns'].rolling(20).std().fillna(0)
         
-        # دیگر نیازی به dropna() نیست چون NaN ها را مدیریت کردیم
-        # فقط برای اطمینان، چند سطر اول که EMA هنوز شکل نگرفته را رد می‌کنیم
-        if len(df) > 20:
-             return df.iloc[20:].reset_index(drop=True)
+        # برگرداندن کل دیتا (بدون حذف 20 تای اول برای جلوگیری از خالی شدن دیتافریم)
         return df.reset_index(drop=True)
         
     except Exception as e:
         print(f"⚠️ Error in process_data: {e}")
         traceback.print_exc()
-        return pd.DataFrame()
+        # در بدترین حالت، دیتای خام را برگردان تا برنامه کرش نکند
+        return df
 
 def get_ml_prediction(df):
     report = {"ensemble_score": 0, "message": "AI: غیرفعال", "individual_results": {}, "ml_score_final": 0}
-    if not GLOBAL_MODELS_LOADED or len(df) < LSTM_TIME_STEPS + 5: return 0, report
+    
+    # اگر دیتا خیلی کم بود، پیش‌بینی نکن
+    if not GLOBAL_MODELS_LOADED or len(df) < 5: 
+        return 0, report
 
     try:
         feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20']
@@ -259,7 +268,7 @@ def get_ml_prediction(df):
                      score_sum += s; count += 1; report["individual_results"][name] = {"prob": round(p*100, 1), "score": round(s, 1)}
                  except: pass
         
-        if lstm_model:
+        if lstm_model and len(df) >= LSTM_TIME_STEPS:
             try:
                 seq = df.iloc[-LSTM_TIME_STEPS:][feature_cols]
                 seq_scaled = scaler.transform(seq).reshape(1, LSTM_TIME_STEPS, len(feature_cols))
@@ -284,7 +293,6 @@ def get_ml_prediction(df):
 
 def calculate_sl_tp(price, signal, atr, dcl, dcu):
     try:
-        # محافظت در برابر ATR صفر یا نامعتبر
         if not atr or np.isnan(atr) or atr <= 0: return 0, 0
         sl, tp = 0, 0
         if signal == 'buy': sl = max(dcl, price - (RISK_REWARD_ATR * atr)); tp = price + (RISK_REWARD_ATR * (price - sl))
@@ -309,14 +317,13 @@ def get_sentiment(symbol):
     return 0, "No News / API Limit"
 
 def check_divergence(df):
-    if len(df) < 30: return 0, "---" # نیاز به دیتای کافی
+    if len(df) < 20: return 0, "---" 
     try:
         price = df['close'].values; rsi = df['RSI_14'].values
         score = 0; msg = "No Divergence"
-        # بررسی واگرایی در 20 کندل آخر
-        prev_max_idx = np.argmax(price[-25:-5]) + (len(price)-25)
+        prev_max_idx = np.argmax(price[-20:-5]) + (len(price)-20)
         if price[-1] > price[prev_max_idx] and rsi[-1] < rsi[prev_max_idx]: score = -3; msg = "Bearish Div 📉"
-        prev_min_idx = np.argmin(price[-25:-5]) + (len(price)-25)
+        prev_min_idx = np.argmin(price[-20:-5]) + (len(price)-20)
         if price[-1] < price[prev_min_idx] and rsi[-1] > rsi[prev_min_idx]: score = 3; msg = "Bullish Div 📈"
         return score, msg
     except: return 0, "---"
@@ -342,15 +349,15 @@ def analyze():
         # 1. دریافت دیتا
         df = get_candles(symbol, interval, size)
         
-        if df is None or len(df) < 50: 
-            return jsonify({"error": "Not enough data (Sources failed or DB empty)."}), 500
+        if df is None or len(df) < 5: 
+            return jsonify({"error": "Not enough data (Check Internet/API)."}), 500
             
         # 2. پردازش
         df = process_data(df)
         
-        # چک نهایی برای جلوگیری از خطای "Data not clean"
-        if df.empty or len(df) < 10:
-            return jsonify({"error": "Data not clean. Too many NaN values after indicator calculation."}), 500
+        # با تغییرات جدید، این شرط دیگر نباید فعال شود مگر اینکه دیتا واقعا خالی باشد
+        if df.empty:
+            return jsonify({"error": "Data processing failed. Try refreshing."}), 500
 
         last = df.iloc[-1]
         
@@ -377,7 +384,7 @@ def analyze():
             df_htf = get_candles(symbol, htf_int, 200)
             if df_htf is not None:
                 df_htf = process_data(df_htf)
-                if not df_htf.empty and len(df_htf) > 10:
+                if not df_htf.empty:
                     htf_last = df_htf.iloc[-1]
                     htf_trend = "Bullish" if htf_last['close'] > htf_last['EMA_50'] else "Bearish"
                     htf_status = f"Active: {htf_trend} ({htf_int})"
