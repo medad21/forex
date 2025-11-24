@@ -30,14 +30,15 @@ def calculate_indicators(df):
     df.ta.atr(length=14, append=True)
     df.ta.adx(length=14, append=True)
     
-    # اندیکاتورهای جدید (ویژگی‌های ثابت)
+    # ✅ اضافه شدن اندیکاتورهای جدید
     df.ta.stoch(k=14, d=3, append=True)
     df.ta.mfi(length=14, append=True)
     df.ta.supertrend(length=10, multiplier=3.0, append=True)
 
     df['RSI_14'] = df.get(f"RSI_14", df['ta_rsi_14'] if 'ta_rsi_14' in df else 0)
     df['RSI_6'] = df.get(f"RSI_6", df['ta_rsi_6'] if 'ta_rsi_6' in df else 0)
-    df['ADX_14'] = df.get(f"ADX_14", df['ta_adx_14'] if 'ta_adx_14' in df else 0)
+    # اصلاح نام ADX به ADX_14
+    df['ADX_14'] = df.get(f"ADX_14", df['ta_adx_14'] if 'ta_adx_14' in df else 0) 
     if 'STOCHk_14_3_3' in df.columns: df['STOCH_K'] = df['STOCHk_14_3_3']
     else: df['STOCH_K'] = 0
     if 'SUPERTd_10_3.0' in df.columns: df['SUPERT_D'] = df['SUPERTd_10_3.0']
@@ -59,7 +60,6 @@ def calculate_indicators(df):
     return df.dropna().reset_index(drop=True)
 
 def create_target(df):
-    # این منطق هدف، برای تشخیص یک حرکت صعودی در 5 کندل آینده استفاده می‌شود
     future_period = 5
     atr_multiplier = 1.5
     targets = []
@@ -69,16 +69,15 @@ def create_target(df):
     
     for i in range(len(closes) - future_period):
         current_close = closes[i]
-        # بررسی برای اطمینان از مقدار ATR مثبت
         atr = atrs[i] if atrs[i] > 0 else 0.001 
         
         take_profit = current_close + (atr * atr_multiplier)
         future_highs = highs[i+1 : i+future_period+1]
         
         if np.max(future_highs) >= take_profit:
-            targets.append(1) # موفقیت در صعود (Buy Signal)
+            targets.append(1) 
         else:
-            targets.append(0) # عدم موفقیت
+            targets.append(0) 
             
     df = df.iloc[:len(targets)]
     df['Target'] = targets
@@ -100,9 +99,9 @@ if __name__ == "__main__":
         exit()
         
     print("⚙️ Combining and processing data...")
-    # ترکیب تمام داده‌ها برای ساخت یک مجموعه داده بزرگ
     df = pd.concat(all_data, ignore_index=True).dropna().reset_index(drop=True)
     
+    # ✅ لیست ویژگی‌های نهایی (13 ویژگی)
     feature_cols = [
         'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
         'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
