@@ -11,9 +11,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 
-SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
-PERIOD = "700d"  # 🛑 این مقدار باید 720d باشد!
-INTERVAL = "1h"
+import datetime
+
+end = datetime.datetime.now()
+start = end - datetime.timedelta(days=700)
+
+df = yf.download(symbol, start=start, end=end, interval="1h")
 
 # --- توابع کمکی ---
 def calculate_indicators(df):
