@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Trader AI 7.0 (Ultimate)</title>
+    <title>Pro Trader AI 7.5 (Ultimate)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
@@ -19,8 +19,6 @@
         @keyframes pulse { 50% { opacity: .5; } }
         .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; }
         .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 4px 0; }
-        
-        /* استایل اختصاصی برای باکس حجم */
         .lot-box {
             background: linear-gradient(45deg, #1e293b, #334155);
             border: 1px solid #facc15;
@@ -34,7 +32,7 @@
     <div class="card p-4 h-fit flex flex-col gap-3">
         <div class="flex justify-between items-center border-b border-slate-700 pb-3">
             <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
-                💎 Pro Trader 7.0
+                💎 Pro Trader 7.5
             </h2>
             <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
         </div>
@@ -46,16 +44,21 @@
                     <option value="EUR/USD">EUR/USD</option>
                     <option value="GBP/USD">GBP/USD</option>
                     <option value="USD/JPY">USD/JPY</option>
-                    <option value="XAU/USD">XAU/USD (Gold)</option>
+                    <option value="XAU/USD">XAU/USD</option>
                     <option value="BTC/USD">BTC/USD</option>
                 </select>
             </div>
             <div>
                 <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
                 <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="5min">5 Min</option>
                     <option value="15min">15 Min</option>
+                    <option value="30min">30 Min</option>
                     <option value="1h" selected>1 Hour</option>
                     <option value="4h">4 Hour</option>
+                    <option value="1day">1 Day</option>
+                    <option value="1week">1 Week</option>
+                    <option value="1month">1 Month</option>
                 </select>
             </div>
             <div>
@@ -64,7 +67,7 @@
             </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2 border-t border-slate-700 pt-2">
+        <div class="grid grid-cols-3 gap-2 border-t border-slate-700 pt-2">
             <div>
                 <label class="text-[10px] text-slate-400 block mb-1">سرمایه ($)</label>
                 <input type="number" id="balance" value="1000" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-green-400">
@@ -73,21 +76,31 @@
                 <label class="text-[10px] text-slate-400 block mb-1">ریسک (%)</label>
                 <input type="number" id="risk" value="1.0" step="0.1" max="100" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-red-400">
             </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">R:R</label>
+                <input type="number" id="rr-ratio" value="1.5" step="0.1" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-yellow-400">
+            </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-2">
-            <div class="bg-slate-800 p-2 rounded flex flex-col justify-center items-center border border-slate-700">
-                <span class="text-[9px] mb-1">تاییدیه HTF</span>
-                <input type="checkbox" id="use-htf" class="accent-blue-500" checked>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">نوع استاپ لاس</label>
+                <select id="sl-type" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-purple-300">
+                    <option value="static">استاتیک (کانال)</option>
+                    <option value="dynamic">داینامیک (ترند)</option>
+                </select>
             </div>
-            <div class="bg-slate-800 p-2 rounded flex flex-col justify-center items-center border border-slate-700">
-                <span class="text-[9px] mb-1">استاپ داینامیک</span>
-                <input type="checkbox" id="dynamic-sl" class="accent-purple-500">
+            <div class="flex flex-col justify-end">
+                <div class="bg-slate-800 p-2 rounded flex justify-between items-center border border-slate-700 h-[38px]">
+                    <span class="text-[10px]">Live Mode</span>
+                    <input type="checkbox" id="auto-refresh" class="accent-green-500" onchange="toggleAutoRefresh()">
+                </div>
             </div>
-            <div class="bg-slate-800 p-2 rounded flex flex-col justify-center items-center border border-slate-700">
-                <span class="text-[9px] mb-1">Live Mode</span>
-                <input type="checkbox" id="auto-refresh" class="accent-green-500" onchange="toggleAutoRefresh()">
-            </div>
+        </div>
+        
+        <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] text-slate-400">تاییدیه تایم بالا (HTF):</span>
+            <input type="checkbox" id="use-htf" class="accent-blue-500" checked>
         </div>
 
         <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm transition-all active:scale-95">
@@ -109,7 +122,7 @@
             
             <div class="grid grid-cols-2 gap-2">
                 <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-purple-300">هوش مصنوعی (Ensemble)</div>
+                    <div class="text-[9px] text-purple-300">هوش مصنوعی</div>
                     <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
                 </div>
                 <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
@@ -120,27 +133,17 @@
 
             <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
                 <div class="flex justify-between items-center mb-2">
-                    <p class="text-xs font-bold text-purple-300">گزارش عملکرد Ensemble AI</p>
+                    <p class="text-xs font-bold text-purple-300">گزارش Ensemble AI</p>
                     <span id="ensemble-score-raw" class="font-mono text-[10px] bg-slate-700 px-2 rounded">Raw: 0</span>
                 </div>
-                
-                <div class="stat-row">
-                    <span class="text-slate-400">عوامل کلیدی (Features)</span>
-                    <span id="ml-importance-val" class="font-mono text-[10px] text-yellow-400">---</span>
-                </div>
-
-                <div class="mt-3 border-t border-slate-700 pt-2">
-                    <p class="text-[10px] text-slate-500 mb-1">آراء مدل‌ها:</p>
-                    <div id="ml-individual-results">
-                        <div class="ml-detail-row skeleton"><span class="text-slate-400">RF (Prob)</span><span class="font-mono">---</span></div>
-                    </div>
-                </div>
+                <div id="ml-individual-results"></div>
             </div>
 
             <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                 <div class="stat-row"><span class="text-slate-400">قیمت لحظه‌ای</span><span id="price-val" class="font-mono font-bold text-yellow-400">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">روند (Trend)</span><span id="trend-val" class="font-bold">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">شاخص RSI</span><span id="rsi-val" class="font-mono font-bold text-cyan-400">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
                 <div class="stat-row"><span class="text-slate-400">تاییدیه تایم بالا</span><span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span></div>
                 <div class="stat-row"><span class="text-slate-400">واگرایی</span><span id="div-val" class="font-bold">---</span></div>
             </div>
@@ -155,7 +158,6 @@
                 <div id="lot-val" class="font-mono font-black text-2xl text-white drop-shadow-md">---</div>
                 <div id="risk-val" class="text-[9px] text-slate-400 mt-1">ریسک دلاری: ---</div>
             </div>
-
         </div>
     </div>
     
@@ -164,7 +166,11 @@
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
-    const intervalMap = { "15min": "15", "1h": "60", "4h": "240" };
+    const intervalMap = { 
+        "5min": "5", "15min": "15", "30min": "30", "1h": "60", 
+        "4h": "240", "1day": "D", "1week": "W", "1month": "M" 
+    };
+    
     let refreshTimer = null; let countdownTimer = null;
     
     window.onload = () => loadChart("EUR/USD", "1h");
@@ -215,10 +221,10 @@
                 interval: document.getElementById("interval").value,
                 use_htf: document.getElementById("use-htf").checked,
                 size: parseInt(document.getElementById("candle-size").value),
-                // ✅ فیلدهای جدید
                 balance: parseFloat(document.getElementById("balance").value) || 1000,
                 risk: parseFloat(document.getElementById("risk").value) || 1.0,
-                dynamic_sl: document.getElementById("dynamic-sl").checked
+                rr: parseFloat(document.getElementById("rr-ratio").value) || 1.5,
+                sl_type: document.getElementById("sl-type").value
             };
 
             const res = await fetch('/analyze', {
@@ -262,18 +268,18 @@
         document.getElementById("price-val").innerText = data.price;
         document.getElementById("tp-val").innerText = data.setup.tp || "-";
         document.getElementById("sl-val").innerText = data.setup.sl || "-";
-        
-        // ✅ نمایش حجم جدید
         document.getElementById("lot-val").innerText = data.setup.lot_size || "0";
         document.getElementById("risk-val").innerText = `ریسک دلاری: $${data.setup.risk_amt}`;
-
         document.getElementById("sr-val").innerText = data.indicators.sr_levels;
         document.getElementById("news-val").innerText = data.indicators.news;
         
+        // ✅ ترجمه روند و نمایش RSI
+        const trendMap = { "Uptrend": "صعودی 🟢", "Downtrend": "نزولی 🔴" };
         const trendEl = document.getElementById("trend-val");
-        trendEl.innerText = data.indicators.trend;
+        trendEl.innerText = trendMap[data.indicators.trend] || data.indicators.trend;
         trendEl.className = data.indicators.trend.includes("Up") ? "font-bold text-green-400" : (data.indicators.trend.includes("Down") ? "font-bold text-red-400" : "font-bold");
 
+        document.getElementById("rsi-val").innerText = data.indicators.rsi;
         document.getElementById("regime-val").innerText = data.indicators.regime;
         document.getElementById("div-val").innerText = data.indicators.divergence;
 
@@ -281,16 +287,8 @@
         htfEl.innerText = data.indicators.htf_status;
         htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${data.indicators.htf_trend === "Bullish" ? "text-green-400" : (data.indicators.htf_trend === "Bearish" ? "text-red-400" : "text-slate-400")}`;
 
-        // AI
         document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
         document.getElementById("ensemble-score-raw").innerText = `Raw: ${data.indicators.ai_report.ensemble_score}`;
-
-        const importanceData = data.indicators.ai_report.importances;
-        let importanceText = '---';
-        if (importanceData && Object.keys(importanceData).length > 0) {
-            importanceText = Object.entries(importanceData).slice(0, 3).map(([k, v]) => `${k}`).join(' | ');
-        }
-        document.getElementById("ml-importance-val").innerText = importanceText;
 
         const indContainer = document.getElementById("ml-individual-results");
         indContainer.innerHTML = '';
@@ -300,7 +298,7 @@
         }
     }
 
-    function applySkeleton(active) { ["price-val", "trend-val", "tp-val", "sl-val", "lot-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
+    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "tp-val", "sl-val", "lot-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
 </script>
 </body>
 </html>
