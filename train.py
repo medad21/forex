@@ -51,7 +51,7 @@ def calculate_indicators(df):
         df.columns = df.columns.get_level_values(0)
 
     df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low',
-                            'Close': 'close', 'Volume': 'volume'})
+                             'Close': 'close', 'Volume': 'volume'})
 
     df['Returns'] = df['close'].pct_change()
 
@@ -123,6 +123,7 @@ if __name__ == "__main__":
 
     for symbol in SYMBOLS:
         print(f"\n⏳ Downloading {symbol} ...")
+        # 🛑 استفاده از تابع جدید Batch Download
         df_symbol = download_in_batches(symbol, total_days=650, batch_days=200, interval="1h")
 
         if df_symbol.empty:
