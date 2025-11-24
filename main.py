@@ -7,6 +7,7 @@ import requests
 import warnings
 import yfinance as yf
 import traceback
+import gc  # ✅ اضافه شده برای مدیریت حافظه
 from flask import Flask, request, jsonify, render_template
 from urllib.parse import urlparse
 
@@ -41,7 +42,7 @@ RISK_REWARD_ATR = 1.5
 SIGNAL_SCORE_THRESHOLD = 5.0
 LSTM_TIME_STEPS = 10
 
-# ✅ آپدیت: نقشه تایم‌فریم‌های جدید (از 5 دقیقه تا 1 ماه)
+# نقشه تایم‌فریم‌ها
 TIMEFRAME_MAP = {
     "5min": "15min",
     "15min": "1h",
@@ -108,7 +109,6 @@ def get_candles(symbol, interval, size=2000):
     # 2. TwelveData API
     try:
         api_symbol = symbol.replace("/", "")
-        # TwelveData از فرمت‌های استاندارد پشتیبانی می‌کند
         url = f"https://api.twelvedata.com/time_series?symbol={api_symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={req_size}"
         response = requests.get(url, timeout=5)
         data = response.json()
@@ -126,7 +126,7 @@ def get_candles(symbol, interval, size=2000):
     except Exception as e:
         print(f"⚠️ TwelveData Error: {e}")
 
-    # 3. YFinance Fallback (با نگاشت دقیق تایم‌فریم‌ها)
+    # 3. YFinance Fallback
     if df_new.empty:
         try:
             print(f"🔄 Trying YFinance fallback for {symbol}...")
@@ -137,21 +137,19 @@ def get_candles(symbol, interval, size=2000):
             elif "GBP" in symbol: yf_symbol = "GBPUSD=X"
             else: yf_symbol = symbol.replace("/", "") + "=X"
             
-            # ✅ نگاشت تایم‌فریم‌های جدید به فرمت YFinance
-            yf_int = "1h" # پیش‌فرض
+            yf_int = "1h"
             if interval == "5min": yf_int = "5m"
             elif interval == "15min": yf_int = "15m"
             elif interval == "30min": yf_int = "30m"
             elif interval == "1h": yf_int = "1h"
-            elif interval == "4h": yf_int = "1h" # یاهو 4h ندارد، 1h می‌گیریم (رزولوشن بالاتر بهتر است)
+            elif interval == "4h": yf_int = "1h"
             elif interval == "1day": yf_int = "1d"
             elif interval == "1week": yf_int = "1wk"
             elif interval == "1month": yf_int = "1mo"
             
-            # برای تایم‌فریم‌های کوتاه، دوره (Period) را کم می‌کنیم تا ارور ندهد
             period = "1mo"
             if interval in ["5min", "15min", "30min"]: period = "5d"
-            elif interval in ["1week", "1month"]: period = "2y" # برای تایم بالا دیتای بیشتر نیاز است
+            elif interval in ["1week", "1month"]: period = "2y"
 
             df_yf = yf.download(yf_symbol, period=period, interval=yf_int, progress=False)
             
@@ -169,7 +167,6 @@ def get_candles(symbol, interval, size=2000):
                 req_cols = ['datetime', 'open', 'high', 'low', 'close', 'volume']
                 df_new = df_yf[[c for c in req_cols if c in df_yf.columns]].dropna()
                 
-                # تبدیل نهایی
                 for c in ['open', 'high', 'low', 'close', 'volume']:
                     if c in df_new.columns: df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
 
@@ -204,20 +201,17 @@ def get_candles(symbol, interval, size=2000):
     return None
 
 def process_data(df):
-    """ ✅ نسخه دقیق: استفاده از ffill/bfill به جای صفر کردن داده‌ها """
+    """ ✅ نسخه دقیق: استفاده از ffill/bfill """
     if df is None or df.empty: return pd.DataFrame()
     
     try:
-        # 1. تبدیل اولیه
         cols = ['open', 'high', 'low', 'close', 'volume']
         for c in cols:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
         
-        # اگر دیتا خیلی کم باشد، محاسبات خطا می‌دهد
         if len(df) < 30: return df 
 
-        # 2. محاسبه اندیکاتورها
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.ema(length=100, append=True)
@@ -228,27 +222,20 @@ def process_data(df):
         df.ta.macd(append=True)
         df.ta.donchian(lower_length=20, upper_length=20, append=True)
         
-        # تطبیق نام ستون‌ها
         if 'ATRr_14' in df.columns: df['ATR_14'] = df['ATRr_14']
         if 'ADX_14' not in df.columns and 'ADX' in df.columns: df['ADX_14'] = df['ADX']
         
-        # ✅ اصلاح اصلی: استفاده از Forward Fill برای حفظ دقت روند
-        df = df.fillna(method='ffill') # پر کردن با مقدار قبلی
-        df = df.fillna(method='bfill') # پر کردن سطرهای اول با مقدار بعدی (برای شروع دیتا)
-        
-        # اگر هنوز NaN باقی مانده بود (مثلاً کل ستون خالی بود)، با 0 پر کن (به عنوان آخرین سنگر)
+        # استفاده از Forward Fill برای دقت
+        df = df.fillna(method='ffill') 
+        df = df.fillna(method='bfill') 
         df = df.fillna(0)
 
-        # تعریف ستون‌های مشتق شده
         df['DCL'] = df.get('DCL_20_20', df['low'])
         df['DCU'] = df.get('DCU_20_20', df['high'])
 
         df['Returns'] = df['close'].pct_change().fillna(0)
         
-        # محاسبات ایمن (جلوگیری از تقسیم بر صفر)
         df['Volatility'] = np.where(df['close'] != 0, (df['high'] - df['low']) / df['close'], 0)
-        
-        # نرمال‌سازی فاصله EMA
         df['EMA_Diff_Fast'] = np.where(df['close'] != 0, (df.get('EMA_20', df['close']) - df.get('EMA_50', df['close'])) / df['close'], 0)
         df['EMA_Diff_Slow'] = np.where(df['close'] != 0, (df.get('EMA_50', df['close']) - df.get('EMA_100', df['close'])) / df['close'], 0)
         
@@ -279,7 +266,6 @@ def get_ml_prediction(df):
         input_scaled = scaler.transform(last_row)
         score_sum = 0; count = 0
         
-        # مدل‌های کلاسیک
         for name, model in [('RF', rf_model), ('LR', lr_model), ('XGB', xgb_model)]:
              if model:
                  try:
@@ -287,7 +273,6 @@ def get_ml_prediction(df):
                      score_sum += s; count += 1; report["individual_results"][name] = {"prob": round(p*100, 1), "score": round(s, 1)}
                  except: pass
         
-        # مدل LSTM
         if lstm_model and len(df) >= LSTM_TIME_STEPS:
             try:
                 seq = df.iloc[-LSTM_TIME_STEPS:][feature_cols]
@@ -341,7 +326,6 @@ def check_divergence(df):
     try:
         price = df['close'].values; rsi = df['RSI_14'].values
         score = 0; msg = "No Divergence"
-        # بررسی واگرایی در ۲۰ کندل اخیر
         prev_max_idx = np.argmax(price[-20:-5]) + (len(price)-20)
         if price[-1] > price[prev_max_idx] and rsi[-1] < rsi[prev_max_idx]: score = -3; msg = "Bearish Div 📉"
         prev_min_idx = np.argmin(price[-20:-5]) + (len(price)-20)
@@ -367,25 +351,21 @@ def analyze():
         use_htf = str(data.get("use_htf")).lower() == 'true'
         size = int(data.get("size", 2000))
         
-        # 1. دریافت دیتا
         df = get_candles(symbol, interval, size)
         
         if df is None or len(df) < 5: 
             return jsonify({"error": "Not enough data (Check Internet/API)."}), 500
             
-        # 2. پردازش
         df = process_data(df)
         
         if df.empty:
-            return jsonify({"error": "Data processing failed. Try refreshing."}), 500
+            return jsonify({"error": "Data processing failed."}), 500
 
         last = df.iloc[-1]
         
-        # هوش مصنوعی
         ml_score, ml_report = get_ml_prediction(df)
         score = ml_score
         
-        # تحلیل تکنیکال
         trend = "Uptrend" if last.get('EMA_20', 0) > last.get('EMA_50', 0) else "Downtrend"
         rsi = last.get('RSI_14', 50); adx = last.get('ADX_14', 0)
         
@@ -398,7 +378,6 @@ def analyze():
         news_score, news_msg = get_sentiment(symbol); score += news_score
         div_score, div_msg = check_divergence(df); score += div_score
         
-        # HTF با پشتیبانی از تایم‌های جدید
         htf_status = "Inactive"; htf_trend = "N/A"
         if use_htf and interval in TIMEFRAME_MAP:
             htf_int = TIMEFRAME_MAP[interval]
@@ -437,6 +416,12 @@ def analyze():
                 }
             }
         }
+        
+        # ✅ مدیریت رم بسیار مهم: آزادسازی حافظه قبل از پاسخ
+        del df
+        if 'df_htf' in locals(): del df_htf
+        gc.collect()
+        
         return jsonify(convert_to_serializable(response))
 
     except Exception as e:
