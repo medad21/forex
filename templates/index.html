@@ -45,9 +45,14 @@
             <div>
                 <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
                 <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="5min">5 Min</option>
                     <option value="15min">15 Min</option>
+                    <option value="30min">30 Min</option>
                     <option value="1h" selected>1 Hour</option>
                     <option value="4h">4 Hour</option>
+                    <option value="1day">1 Day</option>
+                    <option value="1week">1 Week</option>
+                    <option value="1month">1 Month</option>
                 </select>
             </div>
             <div>
@@ -140,7 +145,17 @@
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
-    const intervalMap = { "15min": "15", "1h": "60", "4h": "240" };
+    // ✅ نقشه جدید تایم‌فریم‌ها برای TradingView
+    const intervalMap = { 
+        "5min": "5", 
+        "15min": "15", 
+        "30min": "30", 
+        "1h": "60", 
+        "4h": "240", 
+        "1day": "D", 
+        "1week": "W", 
+        "1month": "M" 
+    };
     let refreshTimer = null; let countdownTimer = null;
     
     // لود چارت هنگام شروع
@@ -184,7 +199,6 @@
         } else { clearInterval(refreshTimer); clearInterval(countdownTimer); badge.innerText = "00:00"; badge.classList.remove("text-green-400"); }
     }
 
-    // ✅ بخش اصلاح شده برای هماهنگی با بک‌اند جدید
     async function runAnalysis() {
         const btn = document.getElementById("btn-analyze");
         btn.disabled = true; btn.innerHTML = "⏳ تحلیل Ensemble AI و دریافت داده...";
@@ -201,7 +215,7 @@
                 size: parseInt(document.getElementById("candle-size").value)
             };
 
-            // ارسال درخواست به صورت POST (اصلاح اصلی)
+            // ارسال درخواست به صورت POST 
             const res = await fetch('/analyze', {
                 method: 'POST',
                 headers: {
@@ -263,7 +277,7 @@
         // Indicators
         const trendEl = document.getElementById("trend-val");
         trendEl.innerText = data.indicators.trend;
-        trendEl.className = data.indicators.trend.includes("Up") ? "font-bold text-green-400" : (data.indicators.trend.includes("Down") ? "font-bold text-red-400" : "font-bold");
+        trendEl.className = data.indicators.trend.includes("Up") ? "font-bold text-green-400" : (data.indicators.trend.includes("Down") ? "font-bold text-red-400" : "font-bold text-yellow-400"); // بهبود رنگ روند
 
         const macdEl = document.getElementById("macd-val");
         macdEl.innerText = data.indicators.macd;
@@ -283,8 +297,17 @@
 
         // Ensemble ML Prediction and Report
         document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
-        document.getElementById("ml-accuracy-val").innerText = data.indicators.ai_report.accuracy;
         document.getElementById("ensemble-score-raw").innerText = `Raw: ${data.indicators.ai_report.ensemble_score}`;
+
+        // ✅ رفع مشکل N/A دقت هوش مصنوعی: نمایش پیام آموزشی به جای N/A
+        const accEl = document.getElementById("ml-accuracy-val");
+        if (data.indicators.ai_report.accuracy === "N/A" || data.indicators.ai_report.accuracy === "---") {
+            accEl.innerText = "آموزش نیاز است! ⚙️";
+            accEl.className = "font-mono text-blue-400 font-bold";
+        } else {
+            accEl.innerText = data.indicators.ai_report.accuracy;
+            accEl.className = "font-mono text-green-400 font-bold";
+        }
 
         // Feature Importance
         const importanceData = data.indicators.ai_report.importances;
