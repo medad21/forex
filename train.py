@@ -13,7 +13,7 @@ from xgboost import XGBClassifier
 
 # ✅ لیست کامل نمادها برای آموزش ترکیبی (5 نماد اصلی)
 SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
-PERIOD = "2y"   # افزایش دوره به 3 سال برای داده‌های بیشتر
+PERIOD = "1y"   # افزایش دوره به 3 سال برای داده‌های بیشتر
 INTERVAL = "1h" # تایم فریم 1 ساعته
 
 # --- توابع کمکی ---
