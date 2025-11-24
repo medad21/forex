@@ -12,7 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 
 SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
-PERIOD = "720d"  # 🛑 این مقدار باید 720d باشد!
+PERIOD = "700d"  # 🛑 این مقدار باید 720d باشد!
 INTERVAL = "1h"
 
 # --- توابع کمکی ---
