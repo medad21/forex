@@ -16,19 +16,18 @@ from xgboost import XGBClassifier
 # -------------------------
 # تنظیمات
 # -------------------------
-SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"]  # نمادها
+SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"]  # بدون suffix Yahoo/X
 INTERVAL = "1h"
 TOTAL_DAYS = 650
 TIME_STEPS = 10
 META_HOLDOUT_FRAC = 0.2
 MODEL_DIR = "models"
-CSV_FILE = "data.csv"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-TD_API_KEY = os.getenv('2846295965ec4a1f913cac69a633aab2')  # Twelve Data API Key
+TD_API_KEY = os.getenv('TD_API_KEY')  # Twelve Data API Key
 
 # -------------------------
-# دانلود داده‌ها
+# دانلود داده از Twelve Data یا fallback Yahoo
 # -------------------------
 def download_td(symbol, interval='1h', days=TOTAL_DAYS):
     if not TD_API_KEY:
@@ -59,7 +58,7 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
     return df[['datetime','open','high','low','close','volume']]
 
 # -------------------------
-# محاسبه اندیکاتورها و Target
+# محاسبهٔ اندیکاتورها و Target
 # -------------------------
 def calculate_indicators_and_target(df):
     df = df.copy()
@@ -92,11 +91,12 @@ def calculate_indicators_and_target(df):
     df['EMA_Diff_Fast'] = ema20 - ema50
     df['EMA_Diff_Slow'] = ema50 - ema100
 
+    # Target نمونه: Close در 5 دوره بعد بالاتر است یا نه
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
 # -------------------------
-# ایجاد sequence برای LSTM
+# تابع ایجاد sequences برای LSTM
 # -------------------------
 def create_sequences(X, steps=TIME_STEPS):
     seqs = []
@@ -105,57 +105,31 @@ def create_sequences(X, steps=TIME_STEPS):
     return np.array(seqs)
 
 # -------------------------
-# آپدیت incremental CSV
-# -------------------------
-def update_csv(symbols=SYMBOLS):
-    if os.path.exists(CSV_FILE):
-        df_all = pd.read_csv(CSV_FILE, parse_dates=['datetime'])
-    else:
-        df_all = pd.DataFrame()
-
-    updated = False
-    for sym in symbols:
-        print(f"⏳ Downloading {sym} ...")
-        df_new = download_td(sym)
-        if df_new.empty:
-            df_new = download_yf(sym)
-        if df_new.empty:
-            print(f"❌ No data for {sym}, skipping")
-            continue
-
-        if not df_all.empty and sym in df_all.columns:
-            last_time = df_all['datetime'].max()
-            df_new = df_new[df_new['datetime'] > last_time]
-
-        df_all = pd.concat([df_all, df_new], ignore_index=True).drop_duplicates(subset=['datetime'])
-        updated = True
-
-    if updated:
-        df_all = df_all.sort_values('datetime').reset_index(drop=True)
-        df_all.to_csv(CSV_FILE, index=False)
-        print("✅ CSV updated with new data")
-    else:
-        print("⚠️ No new data found")
-
-# -------------------------
 # اجرای اصلی
 # -------------------------
 if __name__ == "__main__":
-    update_csv()
+    all_dfs = []
+    for sym in SYMBOLS:
+        df = download_td(sym)
+        if df.empty:
+            df = download_yf(sym)
+        if df.empty:
+            print(f"❌ No data for {sym}, skipping")
+            continue
+        df = calculate_indicators_and_target(df)
+        all_dfs.append(df)
 
-    df_all = pd.read_csv(CSV_FILE, parse_dates=['datetime'])
-    df_all = calculate_indicators_and_target(df_all)
+    if not all_dfs:
+        raise SystemExit("No data available from any source.")
 
-    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
-                    'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-                    'MFI_14', 'STOCH_K', 'SUPERT_D']
+    df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
 
+    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20','MFI_14','STOCH_K','SUPERT_D']
     X = df_all[feature_cols].values
     y = df_all['Target'].values
 
     # train/holdout
-    X_train_full, X_meta, y_train_full, y_meta = train_test_split(
-        X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
+    X_train_full, X_meta, y_train_full, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
 
     scaler = StandardScaler()
     X_train_full_scaled = scaler.fit_transform(X_train_full)
@@ -171,6 +145,10 @@ if __name__ == "__main__":
     xgb = XGBClassifier(n_estimators=200, learning_rate=0.05, eval_metric='logloss', use_label_encoder=False)
     xgb.fit(X_train_full_scaled, y_train_full)
     joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
+
+    # پیش‌بینی روی meta holdout
+    rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
+    xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
 
     # LSTM
     if len(X_train_full_scaled) <= TIME_STEPS:
@@ -189,13 +167,12 @@ if __name__ == "__main__":
     lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=1)
     lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    # پیش‌بینی روی meta holdout
+    # LSTM meta
     X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
     y_lstm_meta = y_meta[TIME_STEPS:]
     lstm_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
 
-    rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
-    xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
+    # همترازی و meta model
     rf_meta_aligned = rf_probs[TIME_STEPS:][:len(lstm_probs)]
     xgb_meta_aligned = xgb_probs[TIME_STEPS:][:len(lstm_probs)]
     y_meta_aligned = y_meta[TIME_STEPS:][:len(lstm_probs)]
