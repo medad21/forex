@@ -1,38 +1,82 @@
-# utils/data_manager.py
 import os
 import pandas as pd
-from utils.dukascopy import download_dukascopy
-from utils.alpha_vantage import download_alpha_vantage
+import requests
+from datetime import datetime, timedelta
+from alpha_vantage.foreignexchange import ForeignExchange
 
-DATA_PATH = "data/forex"
+# =====================
+# تنظیمات API
+# =====================
+API_KEY_ALPHA = "W1L3K1JN4F77T9KL"
 
-def ensure_dirs():
-    os.makedirs(DATA_PATH, exist_ok=True)
+RAW_DIR = "data/raw"
+PROCESSED_DIR = "data/processed"
+os.makedirs(RAW_DIR, exist_ok=True)
+os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-def save_combined(symbol, df_new):
-    ensure_dirs()
-    file_path = f"{DATA_PATH}/{symbol}.csv"
+# =====================
+# AlphaVantage Downloader
+# =====================
+def download_alpha_vantage(symbol, interval="60min"):
+    outfile = os.path.join(RAW_DIR, f"{symbol}_av.csv")
 
-    if os.path.exists(file_path):
-        df_old = pd.read_csv(file_path)
-        df_all = pd.concat([df_old, df_new]).drop_duplicates()
+    fx = ForeignExchange(key=API_KEY_ALPHA, output_format='pandas')
+
+    print(f"📥 Downloading AlphaVantage data for {symbol} ...")
+    df, _ = fx.get_currency_exchange_intraday(
+        from_symbol=symbol[:3],
+        to_symbol=symbol[3:],
+        interval=interval
+    )
+
+    df.reset_index(inplace=True)
+    df.rename(columns={
+        'date': 'datetime',
+        '1. open': 'open',
+        '2. high': 'high',
+        '3. low': 'low',
+        '4. close': 'close'
+    }, inplace=True)
+    df['volume'] = 0
+
+    # ادغام با CSV قبلی (اگر وجود دارد)
+    if os.path.exists(outfile):
+        df_old = pd.read_csv(outfile)
+        df = pd.concat([df_old, df], ignore_index=True).drop_duplicates(subset=['datetime']).reset_index(drop=True)
+
+    df.to_csv(outfile, index=False)
+    print(f"✅ Saved AlphaVantage: {outfile}")
+    return outfile
+
+# =====================
+# Dukascopy Downloader
+# =====================
+def download_dukascopy(symbol, timeframe='1h', start_date=None, end_date=None):
+    outfile = os.path.join(RAW_DIR, f"{symbol}_duk.csv")
+
+    # لینک API Dukascopy CSV (مثال: https://www.dukascopy.com/swiss/english/marketwatch/historical/) - CSV دستی یا wget)
+    # برای MVP، از CSV نمونه استفاده می‌کنیم یا دانلود دستی
+
+    print(f"📥 Dukascopy download placeholder for {symbol} ({timeframe})")
+
+    # اگر CSV موجود باشد فقط نمایش بده
+    if os.path.exists(outfile):
+        print(f"✅ Dukascopy CSV exists: {outfile}")
     else:
-        df_all = df_new
+        print(f"⚠️ Dukascopy CSV not found. Please download manually and place in {RAW_DIR}")
+    return outfile
 
-    df_all = df_all.sort_values(by="timestamp" if "timestamp" in df_all else df_all.columns[0])
-    df_all.to_csv(file_path, index=False)
+# =====================
+# تابع اصلی مدیریت داده
+# =====================
+def update_data(symbols):
+    for symbol in symbols:
+        download_alpha_vantage(symbol)
+        download_dukascopy(symbol)
 
-    return df_all
-
-def update_all_sources(symbol="EURUSD"):
-    print("Downloading from Dukascopy…")
-    df1 = download_dukascopy(symbol)
-
-    print("Downloading from AlphaVantage…")
-    df2 = download_alpha_vantage(symbol)
-
-    print("Combining and saving…")
-    df_all = save_combined(symbol, pd.concat([df1, df2]))
-
-    print("DONE. Total rows:", len(df_all))
-    return df_all
+# =====================
+# اجرای مستقل
+# =====================
+if __name__ == '__main__':
+    symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'GC', 'BTC']
+    update_data(symbols)
