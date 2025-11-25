@@ -25,7 +25,7 @@ MODEL_DIR = "models"
 CSV_FILE = "data.csv"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-TD_API_KEY = os.getenv('TD_API_KEY')  # Twelve Data API Key
+TD_API_KEY = os.getenv('2846295965ec4a1f913cac69a633aab2')  # Twelve Data API Key
 
 # -------------------------
 # دانلود داده‌ها
