@@ -4,9 +4,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import yfinance as yf
 import tensorflow as tf
 import datetime
+import requests
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
@@ -16,49 +16,53 @@ from xgboost import XGBClassifier
 # -------------------------
 # تنظیمات
 # -------------------------
-SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
+SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"]  # بدون suffix Yahoo/X
 INTERVAL = "1h"
-
-# پارامترها
-TOTAL_DAYS = 650          # کمتر از 730
-BATCH_DAYS = 200
+TOTAL_DAYS = 650
 TIME_STEPS = 10
-META_HOLDOUT_FRAC = 0.20
-
+META_HOLDOUT_FRAC = 0.2
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+TD_API_KEY = os.getenv('TD_API_KEY')  # Twelve Data API Key
+
 # -------------------------
-# دانلود ایمن داده (batch)
+# دانلود داده از Twelve Data یا fallback Yahoo
 # -------------------------
-def download_in_batches(symbol, total_days=TOTAL_DAYS, batch_days=BATCH_DAYS, interval=INTERVAL):
-    end = datetime.datetime.now()
-    parts = []
-    while total_days > 0:
-        start = end - datetime.timedelta(days=batch_days)
-        print(f"📥 Downloading {symbol} → {start.date()} .. {end.date()}")
-        df = yf.download(symbol, start=start, end=end, interval=interval, progress=False)
-        if not df.empty:
-            parts.append(df)
-        else:
-            print("⚠️ empty batch (Yahoo grumpy) — skipping this interval")
-        end = start
-        total_days -= batch_days
-    if not parts:
+def download_td(symbol, interval='1h', days=TOTAL_DAYS):
+    if not TD_API_KEY:
+        print(f"⚠️ TD API Key not found, skipping Twelve Data for {symbol}")
         return pd.DataFrame()
-    df_full = pd.concat(parts).sort_index().drop_duplicates()
-    return df_full
+    url = f'https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize={days*24}&apikey={TD_API_KEY}&format=CSV'
+    try:
+        df = pd.read_csv(url)
+        if df.empty:
+            return pd.DataFrame()
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.rename(columns={c: c.lower() for c in df.columns})
+        return df[['datetime','open','high','low','close','volume']]
+    except Exception as e:
+        print(f"⚠️ Twelve Data download failed for {symbol}: {e}")
+        return pd.DataFrame()
+
+import yfinance as yf
+
+def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
+    end = datetime.datetime.now()
+    start = end - datetime.timedelta(days=days)
+    df = yf.download(f'{symbol}=X', start=start, end=end, interval=interval, progress=False)
+    if df.empty:
+        return pd.DataFrame()
+    df = df.reset_index()
+    df = df.rename(columns={'Datetime':'datetime','Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
+    return df[['datetime','open','high','low','close','volume']]
 
 # -------------------------
-# محاسبهٔ اندیکاتورها / فیچرها
+# محاسبهٔ اندیکاتورها و Target
 # -------------------------
-def calculate_indicators(df):
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
+def calculate_indicators_and_target(df):
+    df = df.copy()
     df['Returns'] = df['close'].pct_change()
-
-    # اندیکاتورها
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.ema(length=100, append=True)
@@ -70,119 +74,91 @@ def calculate_indicators(df):
     df.ta.mfi(length=14, append=True)
     df.ta.supertrend(length=10, multiplier=3.0, append=True)
 
-    # ستون‌های تمیز شده
-    df['RSI_14'] = df.get("RSI_14", df.get("ta_rsi_14", 0))
-    df['RSI_6']  = df.get("RSI_6", df.get("ta_rsi_6", 0))
-    df['ADX_14'] = df.get("ADX_14", df.get("ta_adx_14", 0))
-    df['STOCH_K'] = df.get("STOCHk_14_3_3", 0)
-    df['SUPERT_D'] = df.get("SUPERTd_10_3.0", 0)
-    df['MFI_14'] = df.get("MFI_14", 0)
-
+    df['RSI_14'] = df.get('RSI_14', df.get('ta_rsi_14',0))
+    df['RSI_6']  = df.get('RSI_6', df.get('ta_rsi_6',0))
+    df['ADX_14'] = df.get('ADX_14', df.get('ta_adx_14',0))
+    df['STOCH_K'] = df.get('STOCHk_14_3_3',0)
+    df['SUPERT_D'] = df.get('SUPERTd_10_3.0',0)
+    df['MFI_14'] = df.get('MFI_14',0)
     df['Volatility'] = df['high'] - df['low']
-    df['Hour'] = df.index.hour
-    df['DayOfWeek'] = df.index.dayofweek
-    df['HV_20'] = df['Returns'].rolling(window=20).std()
+    df['Hour'] = df['datetime'].dt.hour
+    df['DayOfWeek'] = df['datetime'].dt.dayofweek
+    df['HV_20'] = df['Returns'].rolling(20).std()
 
-    ema20 = df.get("EMA_20", df.get("ta_ema_20", df['close']))
-    ema50 = df.get("EMA_50", df.get("ta_ema_50", df['close']))
-    ema100 = df.get("EMA_100", df.get("ta_ema_100", df['close']))
+    ema20 = df.get('EMA_20', df['close'])
+    ema50 = df.get('EMA_50', df['close'])
+    ema100 = df.get('EMA_100', df['close'])
     df['EMA_Diff_Fast'] = ema20 - ema50
     df['EMA_Diff_Slow'] = ema50 - ema100
 
+    # Target نمونه: Close در 5 دوره بعد بالاتر است یا نه
+    df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
 # -------------------------
-# ساخت تارگت
+# تابع ایجاد sequences برای LSTM
 # -------------------------
-def create_target(df, future_period=5, atr_multiplier=1.5):
-    closes = df['close'].values
-    highs = df['high'].values
-    atrs = df.get('ATRr_14', df.get('ATR_14', pd.Series([0]*len(df)))).values
-
-    targets = []
-    for i in range(len(closes) - future_period):
-        current_close = closes[i]
-        atr = max(atrs[i], 0.001)
-        tp = current_close + (atr * atr_multiplier)
-        future_highs = highs[i+1 : i+future_period+1]
-        targets.append(1 if np.max(future_highs) >= tp else 0)
-    df = df.iloc[:len(targets)].copy()
-    df['Target'] = targets
-    return df
-
-# -------------------------
-# ساخت sequences برای LSTM
-# -------------------------
-def create_sequences(array_2d, steps):
-    Xs = []
-    for i in range(len(array_2d) - steps):
-        Xs.append(array_2d[i: i + steps])
-    return np.array(Xs)
+def create_sequences(X, steps=TIME_STEPS):
+    seqs = []
+    for i in range(len(X)-steps):
+        seqs.append(X[i:i+steps])
+    return np.array(seqs)
 
 # -------------------------
 # اجرای اصلی
 # -------------------------
 if __name__ == "__main__":
-    print("⏳ Downloading symbols...")
     all_dfs = []
-    for symbol in SYMBOLS:
-        df_sym = download_in_batches(symbol)
-        if df_sym.empty:
-            print(f"❌ {symbol} produced no data — skipping")
+    for sym in SYMBOLS:
+        df = download_td(sym)
+        if df.empty:
+            df = download_yf(sym)
+        if df.empty:
+            print(f"❌ No data for {sym}, skipping")
             continue
-        df_sym = calculate_indicators(df_sym)
-        df_sym = create_target(df_sym)
-        all_dfs.append(df_sym)
+        df = calculate_indicators_and_target(df)
+        all_dfs.append(df)
 
     if not all_dfs:
-        raise SystemExit("No data downloaded for any symbol — aborting")
+        raise SystemExit("No data available from any source.")
 
-    df = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
-    print(f"✅ Combined dataframe shape: {df.shape}")
+    df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
 
-    feature_cols = [
-        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
-        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-        'MFI_14', 'STOCH_K', 'SUPERT_D'
-    ]
-    X_all = df[feature_cols].values
-    y_all = df['Target'].values
+    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20','MFI_14','STOCH_K','SUPERT_D']
+    X = df_all[feature_cols].values
+    y = df_all['Target'].values
 
-    # تقسیم به train_full و meta_holdout
-    X_train_full, X_meta, y_train_full, y_meta = train_test_split(
-        X_all, y_all, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y_all
-    )
+    # train/holdout
+    X_train_full, X_meta, y_train_full, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
 
-    # مقیاس‌بندی
     scaler = StandardScaler()
     X_train_full_scaled = scaler.fit_transform(X_train_full)
     X_meta_scaled = scaler.transform(X_meta)
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
-    # === آموزش RF و XGB ===
-    print("⚙️ Training RandomForest and XGBoost...")
+    # RandomForest
     rf = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42)
     rf.fit(X_train_full_scaled, y_train_full)
     joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
 
+    # XGB
     xgb = XGBClassifier(n_estimators=200, learning_rate=0.05, eval_metric='logloss', use_label_encoder=False)
     xgb.fit(X_train_full_scaled, y_train_full)
     joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
 
-    # پیش‌بینی نگهدارنده
-    rf_meta_probs = rf.predict_proba(X_meta_scaled)[:,1]
-    xgb_meta_probs = xgb.predict_proba(X_meta_scaled)[:,1]
+    # پیش‌بینی روی meta holdout
+    rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
+    xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
 
-    # === آموزش LSTM ===
+    # LSTM
     if len(X_train_full_scaled) <= TIME_STEPS:
-        TIME_STEPS = max(1, len(X_train_full_scaled)//2)
-        print(f"⚠️ Reducing TIME_STEPS to {TIME_STEPS} due to low data")
+        raise SystemExit(f"Not enough rows for TIME_STEPS={TIME_STEPS}")
 
     X_lstm_train = create_sequences(X_train_full_scaled, TIME_STEPS)
     y_lstm_train = y_train_full[TIME_STEPS:]
 
     lstm_model = tf.keras.Sequential([
-        tf.keras.layers.Input(shape=(TIME_STEPS, X_all.shape[1])),
+        tf.keras.layers.Input(shape=(TIME_STEPS,X.shape[1])),
         tf.keras.layers.LSTM(64, return_sequences=True),
         tf.keras.layers.LSTM(32),
         tf.keras.layers.Dense(1, activation='sigmoid')
@@ -191,28 +167,21 @@ if __name__ == "__main__":
     lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=1)
     lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    # آماده‌سازی نگهدارنده برای LSTM
-    if len(X_meta_scaled) <= TIME_STEPS:
-        X_lstm_meta = create_sequences(X_meta_scaled, max(1, len(X_meta_scaled)//2))
-    else:
-        X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
-    y_lstm_meta = y_meta[TIME_STEPS:len(X_lstm_meta)+TIME_STEPS]
+    # LSTM meta
+    X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
+    y_lstm_meta = y_meta[TIME_STEPS:]
+    lstm_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
 
-    lstm_meta_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
+    # همترازی و meta model
+    rf_meta_aligned = rf_probs[TIME_STEPS:][:len(lstm_probs)]
+    xgb_meta_aligned = xgb_probs[TIME_STEPS:][:len(lstm_probs)]
+    y_meta_aligned = y_meta[TIME_STEPS:][:len(lstm_probs)]
 
-    # همترازی RF/XGB با offset
-    rf_meta_aligned = rf_meta_probs[TIME_STEPS:][:len(lstm_meta_probs)]
-    xgb_meta_aligned = xgb_meta_probs[TIME_STEPS:][:len(lstm_meta_probs)]
-    y_meta_aligned = y_meta[TIME_STEPS:][:len(lstm_meta_probs)]
-
-    # ساخت فیچرهای متا و آموزش LogisticRegression
-    X_meta_for_meta = np.column_stack([rf_meta_aligned, xgb_meta_aligned, lstm_meta_probs])
+    X_meta_for_meta = np.column_stack([rf_meta_aligned, xgb_meta_aligned, lstm_probs])
     y_meta_for_meta = y_meta_aligned
 
-    print("🧩 Training Meta-Model (LogisticRegression)...")
     meta_model = LogisticRegression()
     meta_model.fit(X_meta_for_meta, y_meta_for_meta)
     joblib.dump(meta_model, os.path.join(MODEL_DIR, "meta_model.pkl"))
 
-    print("\n✅ Training complete. Models saved in ./models:")
-    print(os.listdir(MODEL_DIR))
+    print("✅ Training complete. Models saved in ./models")
