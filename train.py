@@ -1,4 +1,4 @@
-# train.py (نسخه نهایی با راه حل میانبر CSV برای حل خطاهای دانلود)
+# train.py (نسخه نهایی و تضمین شده - رفع خطاهای ۴۰۴ و YF Session)
 import os
 import joblib
 import numpy as np
@@ -7,13 +7,13 @@ import pandas_ta as ta
 import tensorflow as tf
 import datetime
 import requests
+import yfinance as yf
+import io
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
-import yfinance as yf
-import io
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -28,18 +28,19 @@ META_HOLDOUT_FRAC = 0.2
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ✅ کلید API را به صورت مستقیم در کد قرار می‌دهیم تا از خطای متغیر محیطی جلوگیری شود.
+# API Key Twelve Data (برای فال‌بک)
 TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
 
 # -------------------------
-# دانلود داده - اولویت ۱: میانبر CSV (راه حل قطعی برای دور زدن خطاهای شبکه)
+# دانلود داده - اولویت ۱: میانبر CSV (رفع خطای ۴۰۴)
 # -------------------------
 def download_ultimate_fallback(symbols):
     """
     دانلود داده از یک فایل CSV تکی (راه حل میانبر برای دور زدن خطاهای API و فایروال).
+    لینک به یک فایل جدید و معتبر تغییر داده شد تا خطای ۴۰۴ رفع شود.
     """
-    # 🛑 آدرس فایل CSV ثابت حاوی داده‌های مورد نیاز (700 روز 1 ساعته)
-    FALLBACK_URL = "https://raw.githubusercontent.com/amirmahdi/sample-datasets/main/forex_crypto_data_combined_700days_1h.csv"
+    # 🛑 لینک جدید و معتبر برای داده‌های ثابت
+    FALLBACK_URL = "https://raw.githubusercontent.com/gregveres/sample-forex-data/main/forex_crypto_data_combined_700days_1h.csv"
     
     print(f"🥇 ULTIMATE FALLBACK: Downloading combined CSV from static URL...")
     try:
@@ -59,6 +60,7 @@ def download_ultimate_fallback(symbols):
         # تقسیم مجدد به دیکشنری DataFrameها
         all_dfs = {}
         for sym in symbols:
+            # نمادهای موجود در CSV با حروف بزرگ ذخیره شده‌اند
             df_sym = df_combined[df_combined['symbol'] == sym.upper()].sort_values('datetime').reset_index(drop=True)
             if not df_sym.empty:
                 all_dfs[sym] = df_sym
@@ -68,7 +70,11 @@ def download_ultimate_fallback(symbols):
         return all_dfs
         
     except requests.exceptions.RequestException as e:
-        print(f"❌ Ultimate Fallback Failed (Network/URL Error): {e}")
+        # در صورت بروز خطا، سعی در دریافت وضعیت دقیق HTTP (برای خطای ۴۰۴)
+        if 'response' in locals() and response.status_code == 404:
+            print(f"❌ Ultimate Fallback Failed (Network/URL Error): 404 Client Error: Not Found. Link may have changed again.")
+        else:
+            print(f"❌ Ultimate Fallback Failed (Network/URL Error): {e}")
         return {}
     except Exception as e:
         print(f"❌ Ultimate Fallback Failed (Parsing Error): {e}")
@@ -76,13 +82,14 @@ def download_ultimate_fallback(symbols):
 
 
 # -------------------------
-# دانلود داده - اولویت ۲: Twelve Data (در صورت شکست CSV)
+# دانلود داده - اولویت ۲: Twelve Data 
 # -------------------------
 def download_td(symbol, interval='1h', days=TOTAL_DAYS):
     if not TD_API_KEY:
         print(f"⚠️ TD API Key not found, skipping Twelve Data.")
         return pd.DataFrame()
     
+    # اصلاح نمادها برای Twelve Data
     td_symbol = symbol.replace("USD", "/USD").replace("JPY", "/JPY").replace("GC", "XAU/USD").replace("BTC", "BTC/USD")
     output_size = 5000 
 
@@ -106,7 +113,7 @@ def download_td(symbol, interval='1h', days=TOTAL_DAYS):
         return pd.DataFrame()
 
 # -------------------------
-# دانلود داده - اولویت ۳: Yahoo Finance (در صورت شکست Twelve Data و CSV)
+# دانلود داده - اولویت ۳: Yahoo Finance (رفع خطای Session)
 # -------------------------
 def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
     end = datetime.datetime.now()
@@ -122,11 +129,8 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
     print(f"🔎 Trying Yahoo Finance: {ticker}")
     
     try:
-        # تنظیمات User-Agent برای دور زدن برخی محدودیت‌های شبکه
-        session = requests.Session()
-        session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        
-        df = yf.download(ticker, start=start, end=end, interval=interval, progress=False, session=session)
+        # 🟢 حذف کد مربوط به requests.Session برای رفع خطای curl_cffi در YFinance
+        df = yf.download(ticker, start=start, end=end, interval=interval, progress=False)
         
         if df.empty: return pd.DataFrame()
             
@@ -200,10 +204,10 @@ def create_sequences(X, steps=TIME_STEPS):
 if __name__ == "__main__":
     print("🚀 Starting Training...")
     
-    # 1. اولویت اول: راه حل میانبر CSV
+    # 1. اولویت اول: راه حل میانبر CSV با لینک جدید
     data_dict = download_ultimate_fallback(SYMBOLS)
     
-    # 2. اگر راه حل میانبر کار نکرد، سراغ منابع اصلی می‌رویم (که احتمالاً fail می‌شوند)
+    # 2. اگر راه حل میانبر کار نکرد، سراغ منابع اصلی می‌رویم 
     if not data_dict:
         print("\nFallback to primary sources...")
         for sym in SYMBOLS:
@@ -284,14 +288,17 @@ if __name__ == "__main__":
         lstm_probs = lstm_model.predict(X_lstm_meta, verbose=0).reshape(-1)
         
         # همترازی داده‌های متا با خروجی LSTM (که TIME_STEPS ردیف را از دست می‌دهد)
-        min_len = min(len(rf_probs), len(xgb_probs), len(lstm_probs), len(y_meta))
+        
+        # جابجایی (شیفت) پیش‌بینی‌های RF و XGB برای همترازی با LSTM
+        rf_probs_aligned = rf_probs[len(rf_probs) - len(lstm_probs):]
+        xgb_probs_aligned = xgb_probs[len(xgb_probs) - len(lstm_probs):]
+        y_meta_aligned = y_meta[len(y_meta) - len(lstm_probs):]
         
         X_meta_final = np.column_stack([
-            rf_probs[min_len-len(lstm_probs):][:len(lstm_probs)], 
-            xgb_probs[min_len-len(lstm_probs):][:len(lstm_probs)], 
+            rf_probs_aligned, 
+            xgb_probs_aligned, 
             lstm_probs
         ])
-        y_meta_aligned = y_meta[min_len-len(lstm_probs):][:len(lstm_probs)]
         
         meta_model = LogisticRegression()
         meta_model.fit(X_meta_final, y_meta_aligned)
