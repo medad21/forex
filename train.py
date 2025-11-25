@@ -5,8 +5,6 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import tensorflow as tf
-import datetime
-import requests
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
@@ -16,49 +14,19 @@ from xgboost import XGBClassifier
 # -------------------------
 # تنظیمات
 # -------------------------
-SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"]  # بدون suffix Yahoo/X
-INTERVAL = "1h"
-TOTAL_DAYS = 650
-TIME_STEPS = 10
-META_HOLDOUT_FRAC = 0.2
+CSV_DIR = "data"
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
-
-TD_API_KEY = os.getenv('TD_API_KEY')  # Twelve Data API Key
-
-# -------------------------
-# دانلود داده از Twelve Data یا fallback Yahoo
-# -------------------------
-def download_td(symbol, interval='1h', days=TOTAL_DAYS):
-    if not TD_API_KEY:
-        print(f"⚠️ TD API Key not found, skipping Twelve Data for {symbol}")
-        return pd.DataFrame()
-    url = f'https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize={days*24}&apikey={TD_API_KEY}&format=CSV'
-    try:
-        df = pd.read_csv(url)
-        if df.empty:
-            return pd.DataFrame()
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        df = df.rename(columns={c: c.lower() for c in df.columns})
-        return df[['datetime','open','high','low','close','volume']]
-    except Exception as e:
-        print(f"⚠️ Twelve Data download failed for {symbol}: {e}")
-        return pd.DataFrame()
-
-import yfinance as yf
-
-def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
-    end = datetime.datetime.now()
-    start = end - datetime.timedelta(days=days)
-    df = yf.download(f'{symbol}=X', start=start, end=end, interval=interval, progress=False)
-    if df.empty:
-        return pd.DataFrame()
-    df = df.reset_index()
-    df = df.rename(columns={'Datetime':'datetime','Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
-    return df[['datetime','open','high','low','close','volume']]
+TIME_STEPS = 10
+META_HOLDOUT_FRAC = 0.2
+FEATURE_COLS = [
+    'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
+    'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
+    'MFI_14', 'STOCH_K', 'SUPERT_D'
+]
 
 # -------------------------
-# محاسبهٔ اندیکاتورها و Target
+# محاسبه اندیکاتورها و Target
 # -------------------------
 def calculate_indicators_and_target(df):
     df = df.copy()
@@ -91,12 +59,11 @@ def calculate_indicators_and_target(df):
     df['EMA_Diff_Fast'] = ema20 - ema50
     df['EMA_Diff_Slow'] = ema50 - ema100
 
-    # Target نمونه: Close در 5 دوره بعد بالاتر است یا نه
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
 # -------------------------
-# تابع ایجاد sequences برای LSTM
+# ایجاد sequences برای LSTM
 # -------------------------
 def create_sequences(X, steps=TIME_STEPS):
     seqs = []
@@ -109,28 +76,26 @@ def create_sequences(X, steps=TIME_STEPS):
 # -------------------------
 if __name__ == "__main__":
     all_dfs = []
-    for sym in SYMBOLS:
-        df = download_td(sym)
-        if df.empty:
-            df = download_yf(sym)
-        if df.empty:
-            print(f"❌ No data for {sym}, skipping")
-            continue
-        df = calculate_indicators_and_target(df)
-        all_dfs.append(df)
+    for file in os.listdir(CSV_DIR):
+        if file.endswith(".csv"):
+            df = pd.read_csv(os.path.join(CSV_DIR, file), parse_dates=['datetime'])
+            df = calculate_indicators_and_target(df)
+            all_dfs.append(df)
 
     if not all_dfs:
-        raise SystemExit("No data available from any source.")
+        raise SystemExit("❌ No data found in CSVs.")
 
-    df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
+    df_all = pd.concat(all_dfs, ignore_index=True)
 
-    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20','MFI_14','STOCH_K','SUPERT_D']
-    X = df_all[feature_cols].values
+    X = df_all[FEATURE_COLS].values
     y = df_all['Target'].values
 
-    # train/holdout
-    X_train_full, X_meta, y_train_full, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
+    # تقسیم train/holdout برای meta model
+    X_train_full, X_meta, y_train_full, y_meta = train_test_split(
+        X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y
+    )
 
+    # StandardScaler
     scaler = StandardScaler()
     X_train_full_scaled = scaler.fit_transform(X_train_full)
     X_meta_scaled = scaler.transform(X_meta)
@@ -141,7 +106,7 @@ if __name__ == "__main__":
     rf.fit(X_train_full_scaled, y_train_full)
     joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
 
-    # XGB
+    # XGBoost
     xgb = XGBClassifier(n_estimators=200, learning_rate=0.05, eval_metric='logloss', use_label_encoder=False)
     xgb.fit(X_train_full_scaled, y_train_full)
     joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
@@ -167,12 +132,12 @@ if __name__ == "__main__":
     lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=1)
     lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    # LSTM meta
+    # LSTM برای meta
     X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
     y_lstm_meta = y_meta[TIME_STEPS:]
     lstm_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
 
-    # همترازی و meta model
+    # ساخت meta features
     rf_meta_aligned = rf_probs[TIME_STEPS:][:len(lstm_probs)]
     xgb_meta_aligned = xgb_probs[TIME_STEPS:][:len(lstm_probs)]
     y_meta_aligned = y_meta[TIME_STEPS:][:len(lstm_probs)]
@@ -184,4 +149,4 @@ if __name__ == "__main__":
     meta_model.fit(X_meta_for_meta, y_meta_for_meta)
     joblib.dump(meta_model, os.path.join(MODEL_DIR, "meta_model.pkl"))
 
-    print("✅ Training complete. Models saved in ./models")
+    print("✅ Training complete. All models saved in ./models/")
