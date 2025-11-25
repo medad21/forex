@@ -1,204 +1,74 @@
+# predict.py
 import os
 import joblib
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import yfinance as yf
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from xgboost import XGBClassifier
-import datetime
 
-SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
-INTERVAL = "1h"
+MODEL_DIR = "models"
+TIME_STEPS = 10  # باید همان مقدار TIME_STEPS در train.py باشد
+feature_cols = [
+    'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
+    'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
+    'MFI_14', 'STOCH_K', 'SUPERT_D'
+]
 
-# ======================================================================
-# دانلود داده به صورت Batch (مطمئن و بدون خطای Yahoo)
-# ======================================================================
-def download_in_batches(symbol, total_days=650, batch_days=200, interval="1h"):
-    end = datetime.datetime.now()
-    all_parts = []
+# بارگذاری مدل‌ها
+scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
+rf = joblib.load(os.path.join(MODEL_DIR, "rf_model.pkl"))
+xgb = joblib.load(os.path.join(MODEL_DIR, "xgb_model.pkl"))
+meta = joblib.load(os.path.join(MODEL_DIR, "meta_model.pkl"))
+lstm = tf.keras.models.load_model(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    while total_days > 0:
-        start = end - datetime.timedelta(days=batch_days)
-        print(f"📥 Batch: {symbol}  →  {start.date()} تا {end.date()}")
-
-        df = yf.download(symbol, start=start, end=end, interval=interval, progress=False)
-
-        if not df.empty:
-            all_parts.append(df)
-        else:
-            print("⚠️ Batch خالی بود، ادامه می‌دهیم...")
-
-        end = start
-        total_days -= batch_days
-
-    if not all_parts:
-        return pd.DataFrame()
-
-    df_full = pd.concat(all_parts).sort_index().drop_duplicates()
-    return df_full
-
-
-# ======================================================================
-# اندیکاتورها
-# ======================================================================
-def calculate_indicators(df):
+def calculate_indicators_local(df):
+    # همان تابع محاسبهٔ اندیکاتور (مختصر شده) — df باید با ایندکس Datetime باشد
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-
-    df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low',
-                             'Close': 'close', 'Volume': 'volume'})
-
+    df = df.rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
     df['Returns'] = df['close'].pct_change()
-
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
-    df.ta.ema(length=100, append=True)
     df.ta.rsi(length=14, append=True)
-    df.ta.rsi(length=6, append=True)
-    df.ta.atr(length=14, append=True)
-    df.ta.adx(length=14, append=True)
-    df.ta.stoch(k=14, d=3, append=True)
-    df.ta.mfi(length=14, append=True)
-    df.ta.supertrend(length=10, multiplier=3.0, append=True)
-
-    df['RSI_14'] = df.get("RSI_14", df.get("ta_rsi_14", 0))
-    df['RSI_6'] = df.get("RSI_6", df.get("ta_rsi_6", 0))
-    df['ADX_14'] = df.get("ADX_14", df.get("ta_adx_14", 0))
-    df['STOCH_K'] = df.get("STOCHk_14_3_3", 0)
-    df['SUPERT_D'] = df.get("SUPERTd_10_3.0", 0)
-    df['MFI_14'] = df.get("MFI_14", 0)
-
     df['Volatility'] = df['high'] - df['low']
     df['Hour'] = df.index.hour
     df['DayOfWeek'] = df.index.dayofweek
-    df['HV_20'] = df['Returns'].rolling(window=20).std()
-
     ema20 = df.get("EMA_20", df.get("ta_ema_20", df['close']))
     ema50 = df.get("EMA_50", df.get("ta_ema_50", df['close']))
-    ema100 = df.get("EMA_100", df.get("ta_ema_100", df['close']))
-
     df['EMA_Diff_Fast'] = ema20 - ema50
-    df['EMA_Diff_Slow'] = ema50 - ema100
+    return df.dropna()
 
-    return df.dropna().reset_index(drop=True)
+def ensemble_predict_from_df(df_recent):
+    """
+    df_recent: dataframe شامل آخرین ردیف‌ها با ایندکس زمانی — 
+               باید حداقل TIME_STEPS ردیف داشته باشد و ستون‌های OHLCV
+    """
+    df_feat = calculate_indicators_local(df_recent)
+    df_feat = df_feat.reset_index(drop=True)
+    X = df_feat[feature_cols].values
 
+    if len(X) < TIME_STEPS:
+        raise ValueError("Not enough rows for TIME_STEPS")
 
-# ======================================================================
-# تارگت
-# ======================================================================
-def create_target(df):
-    future_period = 5
-    atr_multiplier = 1.5
+    # استفاده از آخرین ردیف برای RF/XGB
+    last_row = X[-1].reshape(1, -1)
+    last_row_scaled = scaler.transform(last_row)
+    rf_p = rf.predict_proba(last_row_scaled)[:,1][0]
+    xgb_p = xgb.predict_proba(last_row_scaled)[:,1][0]
 
-    targets = []
-    closes = df['close'].values
-    highs = df['high'].values
-    atrs = df.get('ATRr_14', df.get('ATR_14', 0.001)).values
+    # برای LSTM باید sequence بسازیم از آخرین TIME_STEPS ردیف‌ها
+    seq = X[-TIME_STEPS:]
+    seq_scaled = scaler.transform(seq)
+    seq_input = seq_scaled.reshape(1, seq_scaled.shape[0], seq_scaled.shape[1])
+    lstm_p = lstm.predict(seq_input).reshape(-1)[0]
 
-    for i in range(len(closes) - future_period):
-        current_close = closes[i]
-        atr = max(atrs[i], 0.001)
+    meta_X = np.array([[rf_p, xgb_p, lstm_p]])
+    final_prob = meta.predict_proba(meta_X)[:,1][0]
+    final_class = 1 if final_prob > 0.5 else 0
+    return final_class, final_prob, dict(rf=rf_p, xgb=xgb_p, lstm=lstm_p)
 
-        take_profit = current_close + (atr * atr_multiplier)
-        future_highs = highs[i + 1:i + future_period + 1]
-
-        targets.append(1 if np.max(future_highs) >= take_profit else 0)
-
-    df = df.iloc[:len(targets)]
-    df['Target'] = targets
-    return df
-
-
-# ======================================================================
-# اجرای اصلی
-# ======================================================================
+# مثال استفاده:
 if __name__ == "__main__":
-
-    all_data = []
-
-    for symbol in SYMBOLS:
-        print(f"\n⏳ Downloading {symbol} ...")
-        # 🛑 استفاده از تابع جدید Batch Download
-        df_symbol = download_in_batches(symbol, total_days=650, batch_days=200, interval="1h")
-
-        if df_symbol.empty:
-            print(f"❌ {symbol} هیچ داده‌ای نداد!")
-            continue
-
-        df_symbol = calculate_indicators(df_symbol)
-        df_symbol = create_target(df_symbol)
-        all_data.append(df_symbol)
-
-    if not all_data:
-        print("❌ هیچ دیتایی دانلود نشد!")
-        exit()
-
-    print("⚙️ Combining data...")
-    df = pd.concat(all_data, ignore_index=True).dropna().reset_index(drop=True)
-
-    feature_cols = [
-        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
-        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-        'MFI_14', 'STOCH_K', 'SUPERT_D'
-    ]
-
-    X = df[feature_cols].values
-    y = df['Target'].values
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, shuffle=True, stratify=y
-    )
-
-    print("⚖️ Scaling data...")
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-
-    if not os.path.exists("models"):
-        os.makedirs("models")
-
-    print("🧠 Training Models...")
-
-    rf = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42)
-    rf.fit(X_train_scaled, y_train)
-    joblib.dump(rf, 'models/rf_model.pkl')
-
-    lr = LogisticRegression(C=1.0, random_state=42)
-    lr.fit(X_train_scaled, y_train)
-    joblib.dump(lr, 'models/lr_model.pkl')
-
-    xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, eval_metric='logloss')
-    xgb.fit(X_train_scaled, y_train)
-    joblib.dump(xgb, 'models/xgb_model.pkl')
-
-    # LSTM
-    time_steps = 10
-
-    def create_lstm_data(data, steps):
-        X = []
-        for i in range(len(data) - steps):
-            X.append(data[i:i + steps])
-        return np.array(X)
-
-    X_lstm = create_lstm_data(scaler.transform(X), time_steps)
-    y_lstm = y[time_steps:]
-    split = int(len(X_lstm) * 0.8)
-
-    lstm = tf.keras.Sequential([
-        tf.keras.layers.Input(shape=(time_steps, len(feature_cols))),
-        tf.keras.layers.LSTM(64, return_sequences=True),
-        tf.keras.layers.LSTM(32),
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
-
-    lstm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    lstm.fit(X_lstm[:split], y_lstm[:split], epochs=3, batch_size=32, verbose=0)
-    lstm.save('models/lstm_model.h5')
-
-    joblib.dump(scaler, 'models/scaler.pkl')
-
-    print("\n✅ Done! All models trained successfully.")
+    # ساخت یک دیتافریم نمونه: اینجا باید دیتای واقعی  time-series وارد کنی
+    # df_recent باید شامل حداقل TIME_STEPS ردیف OHLCV باشد
+    print("نمونه اجرا: predict.py — لطفا df_recent واقعی وارد کن")
