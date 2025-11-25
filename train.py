@@ -20,10 +20,10 @@ SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "BTC-USD"]
 INTERVAL = "1h"
 
 # پارامترها
-TOTAL_DAYS = 650          # مجموع روزهایی که می‌خواهیم دانلود کنیم (کمتر از 730 برای جلوگیری از ارور YF)
-BATCH_DAYS = 200          # اندازه هر بچ دانلود
-TIME_STEPS = 10           # برای LSTM؛ در صورت کمبود دیتا این را کاهش بده
-META_HOLDOUT_FRAC = 0.20  # نسبت نگهدارنده برای meta-model
+TOTAL_DAYS = 650          # کمتر از 730
+BATCH_DAYS = 200
+TIME_STEPS = 10
+META_HOLDOUT_FRAC = 0.20
 
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -58,7 +58,7 @@ def calculate_indicators(df):
     df = df.rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
     df['Returns'] = df['close'].pct_change()
 
-    # اندیکاتورهای پایه
+    # اندیکاتورها
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.ema(length=100, append=True)
@@ -92,7 +92,7 @@ def calculate_indicators(df):
     return df.dropna().reset_index(drop=True)
 
 # -------------------------
-# ساخت تارگت (مثال: تحقق TP براساس ATR)
+# ساخت تارگت
 # -------------------------
 def create_target(df, future_period=5, atr_multiplier=1.5):
     closes = df['close'].values
@@ -111,7 +111,7 @@ def create_target(df, future_period=5, atr_multiplier=1.5):
     return df
 
 # -------------------------
-# تابع کمکی برای ساخت sequence برای LSTM
+# ساخت sequences برای LSTM
 # -------------------------
 def create_sequences(array_2d, steps):
     Xs = []
@@ -140,17 +140,15 @@ if __name__ == "__main__":
     df = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
     print(f"✅ Combined dataframe shape: {df.shape}")
 
-    # فیچرها (می‌توانی این لیست را گسترش دهی)
     feature_cols = [
         'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
         'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
         'MFI_14', 'STOCH_K', 'SUPERT_D'
     ]
-
     X_all = df[feature_cols].values
     y_all = df['Target'].values
 
-    # تقسیم به train_full و meta_holdout (برای آموزش meta-model)
+    # تقسیم به train_full و meta_holdout
     X_train_full, X_meta, y_train_full, y_meta = train_test_split(
         X_all, y_all, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y_all
     )
@@ -161,7 +159,7 @@ if __name__ == "__main__":
     X_meta_scaled = scaler.transform(X_meta)
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
-    # === مدل RF و XGB روی train_full ===
+    # === آموزش RF و XGB ===
     print("⚙️ Training RandomForest and XGBoost...")
     rf = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42)
     rf.fit(X_train_full_scaled, y_train_full)
@@ -171,14 +169,14 @@ if __name__ == "__main__":
     xgb.fit(X_train_full_scaled, y_train_full)
     joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
 
-    # پیش‌بینی-prob روی نگهدارنده
+    # پیش‌بینی نگهدارنده
     rf_meta_probs = rf.predict_proba(X_meta_scaled)[:,1]
     xgb_meta_probs = xgb.predict_proba(X_meta_scaled)[:,1]
 
     # === آموزش LSTM ===
-    print("🧠 Preparing and training LSTM...")
     if len(X_train_full_scaled) <= TIME_STEPS:
-        raise SystemExit(f"Not enough training rows for TIME_STEPS={TIME_STEPS}. Reduce TIME_STEPS or collect more data.")
+        TIME_STEPS = max(1, len(X_train_full_scaled)//2)
+        print(f"⚠️ Reducing TIME_STEPS to {TIME_STEPS} due to low data")
 
     X_lstm_train = create_sequences(X_train_full_scaled, TIME_STEPS)
     y_lstm_train = y_train_full[TIME_STEPS:]
@@ -193,15 +191,16 @@ if __name__ == "__main__":
     lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=1)
     lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    # آماده‌سازی نگهدارنده برای LSTM (برای meta)
+    # آماده‌سازی نگهدارنده برای LSTM
     if len(X_meta_scaled) <= TIME_STEPS:
-        raise SystemExit("Meta holdout too small to create LSTM sequences — increase holdout size or reduce TIME_STEPS.")
+        X_lstm_meta = create_sequences(X_meta_scaled, max(1, len(X_meta_scaled)//2))
+    else:
+        X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
+    y_lstm_meta = y_meta[TIME_STEPS:len(X_lstm_meta)+TIME_STEPS]
 
-    X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
-    y_lstm_meta = y_meta[TIME_STEPS:]
     lstm_meta_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
 
-    # همترازی RF/XGB با offset مربوط به TIME_STEPS
+    # همترازی RF/XGB با offset
     rf_meta_aligned = rf_meta_probs[TIME_STEPS:][:len(lstm_meta_probs)]
     xgb_meta_aligned = xgb_meta_probs[TIME_STEPS:][:len(lstm_meta_probs)]
     y_meta_aligned = y_meta[TIME_STEPS:][:len(lstm_meta_probs)]
