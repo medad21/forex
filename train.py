@@ -1,4 +1,4 @@
-# train.py (نسخه نهایی و اصلاح شده)
+# train.py (Fixed & Optimized)
 import os
 import joblib
 import numpy as np
@@ -7,25 +7,25 @@ import pandas_ta as ta
 import tensorflow as tf
 import datetime
 import requests
-import yfinance as yf
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
+import yfinance as yf
 
 # -------------------------
 # تنظیمات
 # -------------------------
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"] 
 INTERVAL = "1h"
-TOTAL_DAYS = 700 # افزایش بازه برای اطمینان از دیتای کافی
+TOTAL_DAYS = 700 
 TIME_STEPS = 10
 META_HOLDOUT_FRAC = 0.2
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ✅ اصلاح: کلید را مستقیم به صورت رشته قرار دهید (بدون os.getenv)
+# ✅ اصلاح مهم: کلید را مستقیم قرار دادیم (os.getenv حذف شد)
 TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c"
 
 # -------------------------
@@ -39,11 +39,11 @@ def download_td(symbol, interval='1h', days=TOTAL_DAYS):
     
     # نگاشت نمادها برای Twelve Data
     td_symbol = symbol
-    if symbol == "GC": td_symbol = "XAU/USD" # طلا در فارکس
+    if symbol == "GC": td_symbol = "XAU/USD" # طلا
     if symbol == "BTC": td_symbol = "BTC/USD"
     
+    # محاسبه حجم دیتا (محدودیت 5000 تایی برای پلن رایگان)
     output_size = days * 24 
-    # محدودیت سقف 5000 برای پلن رایگان TwelveData وجود دارد
     if output_size > 5000: output_size = 5000
 
     url = f'https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize={output_size}&apikey={TD_API_KEY}&format=CSV'
@@ -53,9 +53,8 @@ def download_td(symbol, interval='1h', days=TOTAL_DAYS):
         df = pd.read_csv(url)
         
         if df.empty or 'datetime' not in df.columns:
-            # بررسی ارور API
-            if 'code' in df.columns or 'status' in df.columns:
-                print(f"⚠️ Twelve Data Error for {symbol}")
+            if 'code' in df.columns:
+                print(f"⚠️ Twelve Data Error: {df.iloc[0].get('message', 'Unknown error')}")
             return pd.DataFrame()
             
         df['datetime'] = pd.to_datetime(df['datetime'])
@@ -74,12 +73,12 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
     end = datetime.datetime.now()
     start = end - datetime.timedelta(days=days)
     
-    # ✅ اصلاح نمادها برای یاهو
+    # ✅ اصلاح نمادها برای جلوگیری از ارور
     ticker_map = {
         "EURUSD": "EURUSD=X",
         "GBPUSD": "GBPUSD=X",
-        "USDJPY": "JPY=X", # اصلاح شده
-        "GC": "GC=F",      # اصلاح شده برای طلا
+        "USDJPY": "JPY=X",
+        "GC": "GC=F",
         "BTC": "BTC-USD"
     }
     
@@ -87,14 +86,17 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
         
     print(f"🔎 Trying Yahoo Finance: {ticker}")
     try:
-        # ✅ تنظیمات جدید برای جلوگیری از ساختار MultiIndex
-        df = yf.download(ticker, start=start, end=end, interval=interval, progress=False, multi_level_index=False)
+        # دانلود بدون افکت‌های اضافی برای جلوگیری از ارور Impersonate
+        df = yf.download(ticker, start=start, end=end, interval=interval, progress=False)
         
         if df.empty:
             return pd.DataFrame()
             
         df = df.reset_index()
-        # استانداردسازی نام ستون‌ها
+        # استانداردسازی نام ستون‌ها (حذف MultiIndex اگر وجود داشت)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         df.columns = [c.lower() for c in df.columns]
         
         # هندل کردن نام ستون تاریخ
@@ -102,11 +104,13 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
         
         # انتخاب ستون‌های مورد نیاز
         req_cols = ['datetime','open','high','low','close','volume']
-        if not all(col in df.columns for col in req_cols):
+        valid_cols = [c for c in req_cols if c in df.columns]
+        
+        if len(valid_cols) < 5:
             print(f"⚠️ Missing columns in YF data for {symbol}")
             return pd.DataFrame()
 
-        return df[req_cols]
+        return df[valid_cols]
     except Exception as e:
         print(f"❌ YF Error for {symbol}: {e}")
         return pd.DataFrame()
@@ -115,12 +119,12 @@ def download_yf(symbol, interval='1h', days=TOTAL_DAYS):
 # محاسبهٔ اندیکاتورها
 # -------------------------
 def calculate_indicators_and_target(df):
-    if len(df) < 50: return pd.DataFrame() # دیتای ناکافی
+    if len(df) < 50: return pd.DataFrame()
     
     df = df.copy()
-    # تبدیل ستون‌ها به عددی (جهت اطمینان)
     cols = ['open', 'high', 'low', 'close', 'volume']
-    for c in cols: df[c] = pd.to_numeric(df[c], errors='coerce')
+    for c in cols: 
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce')
     df = df.dropna()
 
     df['Returns'] = df['close'].pct_change()
@@ -134,13 +138,7 @@ def calculate_indicators_and_target(df):
     df.ta.stoch(k=14, d=3, append=True)
     df.ta.mfi(length=14, append=True)
     
-    # نام‌گذاری استاندارد ستون‌ها برای جلوگیری از خطای Key Error
-    if 'RSI_14' not in df.columns and 'ta_rsi_14' not in df.columns: 
-        # اگر TA-Lib نام دیگری داد، دستی می‌سازیم
-        df['RSI_14'] = df.ta.rsi(length=14)
-    
-    # نگاشت ستون‌های احتمالی TA به نام‌های مورد نظر ما
-    # (بسته به نسخه pandas-ta نام‌ها ممکن است فرق کند)
+    # نگاشت نام ستون‌ها (برای سازگاری با ورژن‌های مختلف pandas-ta)
     df['RSI_14'] = df.get('RSI_14', df.get('ta_rsi_14', 50))
     df['RSI_6']  = df.get('RSI_6', df.get('ta_rsi_6', 50))
     df['ADX_14'] = df.get('ADX_14', df.get('ta_adx_14', 0))
@@ -159,7 +157,7 @@ def calculate_indicators_and_target(df):
     df['EMA_Diff_Fast'] = ema20 - ema50
     df['EMA_Diff_Slow'] = ema50 - ema100
 
-    # Target: 1 اگر قیمت 5 کندل بعد بالاتر رفت، 0 اگر نه
+    # Target: پیش‌بینی جهت قیمت در 5 کندل آینده
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
@@ -181,10 +179,10 @@ if __name__ == "__main__":
     
     for sym in SYMBOLS:
         print(f"\nProcessing {sym}...")
-        # اولویت با TwelveData
+        # اولویت ۱: دانلود از سرور اصلی (TwelveData) با کلید صحیح
         df = download_td(sym)
         
-        # اگر TwelveData دیتا نداد، برو سراغ یاهو
+        # اولویت ۲: دانلود از یاهو (اگر سرور اصلی خطا داد)
         if df.empty:
             df = download_yf(sym)
             
@@ -206,20 +204,16 @@ if __name__ == "__main__":
     df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
     print(f"\n📊 Total Training Samples: {len(df_all)}")
     
-    # لیست فیچرها
     feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20','MFI_14','STOCH_K']
     
-    # چک کردن وجود ستون‌ها
-    missing = [c for c in feature_cols if c not in df_all.columns]
-    if missing:
-        print(f"❌ Missing columns: {missing}")
-        # پر کردن با صفر برای جلوگیری از کرش
-        for c in missing: df_all[c] = 0
+    # پر کردن مقادیر خالی احتمالی
+    for c in feature_cols:
+        if c not in df_all.columns: df_all[c] = 0
 
     X = df_all[feature_cols].values
     y = df_all['Target'].values
 
-    # تقسیم داده
+    # تقسیم داده‌ها
     X_train_full, X_meta, y_train_full, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
     
     scaler = StandardScaler()
@@ -256,32 +250,24 @@ if __name__ == "__main__":
         lstm_model.fit(X_lstm_train, y_lstm_train, epochs=10, batch_size=64, verbose=1)
         lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
         
-        # Meta Model Prep
-        print("🤖 Training Meta Model (Logistic Regression)...")
-        # پیش‌بینی روی داده‌های Meta Holdout
+        # Meta Model Prep (Logistic Regression)
+        print("🤖 Training Meta Model...")
         rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
         xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
         
         X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
         lstm_probs = lstm_model.predict(X_lstm_meta).reshape(-1)
         
-        # همتراز کردن طول آرایه‌ها (چون LSTM چند سطر اول را می‌خورد)
+        # همتراز کردن طول آرایه‌ها
         min_len = min(len(rf_probs), len(xgb_probs), len(lstm_probs))
-        # ما باید انتهای آرایه‌های RF/XGB را برداریم تا با LSTM مچ شوند یا برعکس
-        # بهتر است همه را به min_len محدود کنیم از انتها
-        
-        rf_probs = rf_probs[-min_len:]
-        xgb_probs = xgb_probs[-min_len:]
-        lstm_probs = lstm_probs[-min_len:]
+        X_meta_final = np.column_stack([rf_probs[-min_len:], xgb_probs[-min_len:], lstm_probs[-min_len:]])
         y_meta_aligned = y_meta[-min_len:]
-        
-        X_meta_final = np.column_stack([rf_probs, xgb_probs, lstm_probs])
         
         meta_model = LogisticRegression()
         meta_model.fit(X_meta_final, y_meta_aligned)
-        joblib.dump(meta_model, os.path.join(MODEL_DIR, "lr_model.pkl")) # نام فایل LR مدل است
+        joblib.dump(meta_model, os.path.join(MODEL_DIR, "lr_model.pkl"))
         
     else:
-        print("⚠️ Not enough data for LSTM/Meta model.")
+        print("⚠️ Not enough data for LSTM.")
 
-    print("\n✅✅ Training Finished Successfully!")
+    print("\n✅✅ Training Finished Successfully! Models saved.")
