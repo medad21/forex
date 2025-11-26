@@ -1,4 +1,4 @@
-# train.py
+# train.py (نسخه نهایی با فیکس اندیکاتور)
 import os
 import joblib
 import numpy as np
@@ -75,7 +75,6 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
     output_size = min(days * 24, 5000)
     
     try:
-        # دریافت داده به صورت JSON (انعطاف‌پذیرتر از as_pandas)
         ts = td.time_series(
             symbol=td_symbol,
             interval=interval,
@@ -89,20 +88,16 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
 
         df = pd.DataFrame(ts)
         
-        # استانداردسازی نام ستون‌ها به حروف کوچک
         df = df.rename(columns={c: c.lower() for c in df.columns})
 
-        # 🛠️ فیکس مهم: اگر volume نبود یا ارور داد، با 0 پر کن
         if 'volume' not in df.columns:
             df['volume'] = 0.0
         
-        # تبدیل ستون datetime
         if 'datetime' in df.columns:
             df['datetime'] = pd.to_datetime(df['datetime'])
         else:
             return pd.DataFrame()
 
-        # تبدیل داده‌های عددی و پر کردن مقادیر خالی با 0
         numeric_cols = ['open', 'high', 'low', 'close', 'volume']
         for col in numeric_cols:
             if col in df.columns:
@@ -110,7 +105,6 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
             else:
                 df[col] = 0.0 
 
-        # مرتب‌سازی زمانی
         df = df.sort_values('datetime').reset_index(drop=True)
         
         return df[['datetime','open','high','low','close','volume']]
@@ -120,12 +114,13 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
         return pd.DataFrame()
 
 # -------------------------
-# محاسبه اندیکاتورها
+# محاسبه اندیکاتورها (با فیکس NaN)
 # -------------------------
 def calculate_indicators_and_target(df):
     if len(df) < 50: return pd.DataFrame()
     df = df.copy()
 
+    # 1. محاسبات اصلی
     df['Returns'] = df['close'].pct_change()
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
@@ -142,25 +137,37 @@ def calculate_indicators_and_target(df):
     except:
         pass 
 
-    df['RSI_14'] = df.get('RSI_14', df.get('ta_rsi_14', 50))
-    df['RSI_6']  = df.get('RSI_6', df.get('ta_rsi_6', 50))
-    df['ADX_14'] = df.get('ADX_14', df.get('ta_adx_14', 0))
-    df['STOCH_K'] = df.get('STOCHk_14_3_3', 50)
-    df['SUPERT_D'] = df.get('SUPERTd_10_3.0', 0)
-    df['MFI_14'] = df.get('MFI_14', 50)
+    # 2. فیکس و نام‌گذاری مجدد ستون‌ها (فیکس: استفاده از fillna برای پر کردن NaNهای اندیکاتورها)
     
+    # اندیکاتورهایی که نام‌های استاندارد دارند
+    df['RSI_14'] = df.get('RSI_14', df['close']).fillna(50)
+    df['RSI_6']  = df.get('RSI_6', df['close']).fillna(50)
+    df['ADX_14'] = df.get('ADX_14', df['close']).fillna(0)
+    df['MFI_14'] = df.get('MFI_14', df['close']).fillna(50)
+    
+    # اندیکاتورهایی که نام‌های پیچیده‌تر دارند (و فیکس می‌کنیم)
+    df['STOCH_K'] = df.get('STOCHk_14_3_3', df['close']).fillna(50)
+    df['SUPERT_D'] = df.get('SUPERTd_10_3.0', df['close']).fillna(0)
+
+    # 3. محاسبات مشتق شده و فیکس NaNهای آن‌ها
     df['Volatility'] = df['high'] - df['low']
     df['Hour'] = df['datetime'].dt.hour
     df['DayOfWeek'] = df['datetime'].dt.dayofweek
-    df['HV_20'] = df['Returns'].rolling(20).std()
+    
+    # فیکس NaN های Returns و HV_20
+    df['Returns'] = df['Returns'].fillna(0)
+    df['HV_20'] = df['Returns'].rolling(20).std().fillna(0) 
 
     ema20 = df.get('EMA_20', df['close'])
     ema50 = df.get('EMA_50', df['close'])
+    ema100 = df.get('EMA_100', df['close'])
     
-    df['EMA_Diff_Fast'] = ema20 - ema50
-    df['EMA_Diff_Slow'] = ema50 - df.get('EMA_100', df['close'])
+    df['EMA_Diff_Fast'] = (ema20 - ema50).fillna(0)
+    df['EMA_Diff_Slow'] = (ema50 - ema100).fillna(0)
 
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
+    
+    # حالا که NaNها پر شدند، dropna فقط برای موارد واقعاً ضروری اجرا می‌شود
     return df.dropna().reset_index(drop=True)
 
 # -------------------------
@@ -193,15 +200,21 @@ if __name__ == "__main__":
         print(f"✅ {sym}: Downloaded {len(df)} rows.")
         df = calculate_indicators_and_target(df)
         
-        if not df.empty:
-            all_dfs.append(df)
+        # اگر پس از فیکس، همچنان داده‌ای نداشتیم
+        if df.empty:
+            print(f"❌ Skipping {sym} (Data vanished after indicator calculation).")
+            continue
+            
+        print(f"✅ {sym}: Data prepared. Rows after cleanup: {len(df)}")
+        all_dfs.append(df)
         
         time.sleep(1.5) 
 
     if not all_dfs:
-        print("❌ CRITICAL: No data collected from any symbol. Exiting.")
+        print("❌ CRITICAL: No usable data collected from any symbol. Check API key or data source.")
         raise SystemExit(1)
 
+    # ادغام تمام دیتاها
     df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
     print(f"📊 Total Training Data: {len(df_all)} rows")
 
@@ -214,16 +227,19 @@ if __name__ == "__main__":
     # تقسیم داده‌ها
     X_train_full, X_meta, y_train_full, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y)
 
+    # نرمال‌سازی
     scaler = StandardScaler()
     X_train_full_scaled = scaler.fit_transform(X_train_full)
     X_meta_scaled = scaler.transform(X_meta)
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
+    # 1. آموزش RandomForest
     print("🌲 Training RandomForest...")
     rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
     rf.fit(X_train_full_scaled, y_train_full)
     joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
 
+    # 2. آموزش XGBoost
     print("🚀 Training XGBoost...")
     xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, eval_metric='logloss', use_label_encoder=False, n_jobs=-1)
     xgb.fit(X_train_full_scaled, y_train_full)
@@ -232,6 +248,7 @@ if __name__ == "__main__":
     rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
     xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
 
+    # 3. آموزش LSTM
     print("🧠 Training LSTM...")
     if len(X_train_full_scaled) > TIME_STEPS + 50:
         X_lstm_train = create_sequences(X_train_full_scaled, TIME_STEPS)
@@ -257,6 +274,7 @@ if __name__ == "__main__":
         lstm_probs = lstm_probs[:min_len]
         y_meta_aligned = y_meta[TIME_STEPS:][:min_len]
 
+        # 4. آموزش Meta Model
         X_meta_for_meta = np.column_stack([rf_meta_aligned, xgb_meta_aligned, lstm_probs])
         
         print(f"🔗 Training Meta Model with {len(X_meta_for_meta)} samples...")
@@ -266,4 +284,4 @@ if __name__ == "__main__":
         
         print("✅✅ Training pipeline completed successfully!")
     else:
-        print("⚠️ Data insufficient for LSTM sequences.")
+        print("⚠️ Data insufficient for LSTM sequences. Meta model skipped.")
