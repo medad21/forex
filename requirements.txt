@@ -9,6 +9,9 @@ pandas-ta
 scikit-learn
 xgboost
 tensorflow-cpu
+twelvedata  
+
+
 
 
 
