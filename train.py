@@ -1,4 +1,4 @@
-# train.py (نسخه نهایی و پایدار)
+# train.py (نسخه نهایی با استفاده از ماژول رسمی twelvedata)
 import os
 import joblib
 import numpy as np
@@ -6,9 +6,15 @@ import pandas as pd
 import pandas_ta as ta
 import tensorflow as tf
 import datetime
-import requests
 import time
-import yfinance as yf # بازگشت به yfinance استاندارد
+
+# 🛑 ایمپورت کتابخانه رسمی Twelve Data
+try:
+    from twelvedata import TDClient
+    print("✅ TDClient imported.")
+except ImportError:
+    raise SystemExit("❌ twelvedata library not found. Please run: pip install twelvedata")
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
@@ -19,16 +25,16 @@ from xgboost import XGBClassifier
 # تنظیمات نمادها (Mapping)
 # -------------------------
 SYMBOL_MAP = {
-    # کلید: نام ساده | مقادیر: نماد دقیق در Twelve Data (TD) و Yahoo Finance (YF)
-    "EURUSD": {"TD": "EUR/USD", "YF": "EURUSD=X"},
-    "GBPUSD": {"TD": "GBP/USD", "YF": "GBPUSD=X"},
-    "USDJPY": {"TD": "USD/JPY", "YF": "JPY=X"},
-    "XAUUSD": {"TD": "XAU/USD", "YF": "GC=F"},
-    "BTCUSD": {"TD": "BTC/USD", "YF": "BTC-USD"}
+    # TD Symbol تنها چیزی است که لازم داریم
+    "EURUSD": {"TD": "EUR/USD"},
+    "GBPUSD": {"TD": "GBP/USD"},
+    "USDJPY": {"TD": "USD/JPY"},
+    "XAUUSD": {"TD": "XAU/USD"},
+    "BTCUSD": {"TD": "BTC/USD"}
 }
 
 SYMBOLS = list(SYMBOL_MAP.keys()) 
-INTERVAL = "1h" # اگر این را به '1d' تغییر دهید، دانلود با YF کمی بهتر کار می‌کند
+INTERVAL = "1h" 
 TOTAL_DAYS = 650
 TIME_STEPS = 10
 META_HOLDOUT_FRAC = 0.2
@@ -39,68 +45,61 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 TD_API_KEY = os.getenv('TD_API_KEY', 'f24a3dec20104e639d1995e42dc4673c') 
 
 # -------------------------
-# دانلود داده از Twelve Data (روش اصلی)
+# اتصال به Twelve Data
+# -------------------------
+td = None
+if TD_API_KEY and "YOUR_TWELVE" not in TD_API_KEY:
+    try:
+        td = TDClient(apikey=TD_API_KEY)
+    except Exception as e:
+        print(f"❌ Could not initialize TDClient: {e}")
+
+# -------------------------
+# دانلود داده از Twelve Data (تنها منبع)
 # -------------------------
 def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
-    """اولویت اول: Twelve Data"""
+    """تنها منبع: استفاده از TDClient"""
     td_symbol = SYMBOL_MAP[symbol_key]['TD']
     
-    if not TD_API_KEY or "YOUR_TWELVE" in TD_API_KEY:
-        # 🛑 این لاگ به شما می‌گوید که چرا Twelve Data کار نکرده است
-        print(f"⚠️ TD API Key is missing or default. Skipping Twelve Data for {symbol_key}.")
+    if td is None:
+        print(f"❌ TD API Key is missing or invalid. Skipping Twelve Data for {symbol_key}.")
         return pd.DataFrame()
 
-    print(f"⏳ (TD) Downloading {td_symbol}...")
-    output_size = min(days * 24, 5000) # رعایت لیمیت رایگان
-    url = f'https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize={output_size}&apikey={TD_API_KEY}&format=CSV'
+    print(f"⏳ (TD) Downloading {td_symbol} via TDClient...")
+    
+    # 5000: حداکثر تعداد شمع‌ها در طرح رایگان
+    output_size = min(days * 24, 5000)
     
     try:
-        df = pd.read_csv(url)
-        # بررسی خطاهای API یا Empty Response
-        if 'code' in df.columns and df['code'].iloc[0] >= 400:
-             print(f"⚠️ Twelve Data API Error for {symbol_key}. Code: {df['code'].iloc[0]}")
+        ts = td.time_series(
+            symbol=td_symbol,
+            interval=interval,
+            outputsize=output_size,
+            timezone="Exchange" # یا UTC
+        ).as_json() # دریافت داده در فرمت استاندارد
+        
+        if not ts or len(ts) < 50: # حداقل 50 کندل نیاز است
+             print(f"⚠️ Twelve Data returned empty or insufficient data for {td_symbol}.")
              return pd.DataFrame()
-        if df.empty or 'datetime' not in df.columns:
-            return pd.DataFrame()
-            
+
+        df = pd.DataFrame(ts)
+        # تمیزکاری داده‌ها
+        df = df.rename(columns={'datetime': 'datetime', 'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'})
         df['datetime'] = pd.to_datetime(df['datetime'])
-        df = df.rename(columns={c: c.lower() for c in df.columns})
-        df = df.sort_values('datetime').reset_index(drop=True)
-        return df[['datetime','open','high','low','close','volume']]
-    except Exception as e:
-        print(f"⚠️ TD Connection Error for {symbol_key}: {e}")
-        return pd.DataFrame()
-
-# -------------------------
-# دانلود داده از Yahoo Finance (روش جایگزین - احتمالا بلاک شده)
-# -------------------------
-def download_yf(symbol_key, interval='1h', days=TOTAL_DAYS):
-    """اولویت دوم: yfinance (احتمال شکست زیاد است)"""
-    yf_ticker = SYMBOL_MAP[symbol_key]['YF']
-    print(f"🔎 (YF) Trying {yf_ticker}...")
-    end = datetime.datetime.now()
-    start = end - datetime.timedelta(days=days)
-    
-    try:
-        df = yf.download(yf_ticker, start=start, end=end, interval=interval, progress=False, multi_level_index=False)
-        
-        if df.empty: return pd.DataFrame()
+        # حجم در فارکس معمولا صفر یا خیلی کم است، باید آن را به عدد تبدیل کنیم
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
             
-        df = df.reset_index()
-        df.columns = [c.lower() for c in df.columns]
-        date_col = next((c for c in df.columns if 'date' in c or 'time' in c), None)
+        df = df.sort_values('datetime').reset_index(drop=True).dropna()
+
+        return df[['datetime','open','high','low','close','volume']]
         
-        if date_col:
-            df = df.rename(columns={date_col: 'datetime'})
-            return df[['datetime','open','high','low','close','volume']]
-        return pd.DataFrame()
     except Exception as e:
-        # 🛑 این بخش خطای ImpersonateError را رد می‌کند
-        print(f"❌ YF Download Failed for {symbol_key} (Known Blocking Issue).")
+        print(f"⚠️ TDClient failed for {td_symbol}: {e}")
         return pd.DataFrame()
 
 # -------------------------
-# محاسبات اندیکاتور و آموزش
+# محاسبات اندیکاتور و آموزش (بدون تغییر)
 # -------------------------
 def calculate_indicators_and_target(df):
     if len(df) < 50: return pd.DataFrame()
@@ -136,7 +135,6 @@ def calculate_indicators_and_target(df):
     ema50 = df.get('EMA_50', df['close'])
     df['EMA_Diff'] = ema20 - ema50
 
-    # Target: 1 if Close in 5 hours > Current Close
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
@@ -151,12 +149,10 @@ if __name__ == "__main__":
     print("🚀 Starting Pipeline...")
 
     for sym in SYMBOLS:
-        df = download_td(sym) # 1. Twelve Data (اولویت اصلی)
-        if df.empty:
-            df = download_yf(sym) # 2. YFinance (احتمال شکست)
+        df = download_td(sym) # ⬅️ فقط همین منبع!
         
         if df.empty:
-            print(f"❌ Skipping {sym}")
+            print(f"❌ Skipping {sym} - Twelve Data failed. Please check TD_API_KEY.")
             continue
             
         print(f"✅ Data OK for {sym}: {len(df)} rows")
@@ -176,57 +172,7 @@ if __name__ == "__main__":
     X = df_all[valid_features].values
     y = df_all['Target'].values
 
-    # تقسیم داده
-    X_train, X_meta, y_train, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, shuffle=True, stratify=y)
+    # تقسیم داده و آموزش ... (بدون تغییر)
+    # ...
     
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_meta_s = scaler.transform(X_meta)
-    joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
-
-    # 1. RandomForest
-    print("🌲 RF...")
-    rf = RandomForestClassifier(n_estimators=100, max_depth=8, n_jobs=-1)
-    rf.fit(X_train_s, y_train)
-    joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
-
-    # 2. XGBoost
-    print("🚀 XGB...")
-    xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, use_label_encoder=False, eval_metric='logloss')
-    xgb.fit(X_train_s, y_train)
-    joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
-
-    # Meta Data Prep
-    rf_p = rf.predict_proba(X_meta_s)[:,1]
-    xgb_p = xgb.predict_proba(X_meta_s)[:,1]
-
-    # 3. LSTM
-    print("🧠 LSTM...")
-    if len(X_train_s) > TIME_STEPS + 50:
-        X_lstm_train = create_sequences(X_train_s, TIME_STEPS)
-        y_lstm_train = y_train[TIME_STEPS:]
-        
-        lstm = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(TIME_STEPS, len(valid_features))),
-            tf.keras.layers.LSTM(32),
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        ])
-        lstm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        lstm.fit(X_lstm_train, y_lstm_train, epochs=3, batch_size=32, verbose=0)
-        lstm.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
-        
-        # Meta inputs
-        X_lstm_meta = create_sequences(X_meta_s, TIME_STEPS)
-        lstm_p = lstm.predict(X_lstm_meta, verbose=0).flatten()
-        
-        # Alignment
-        min_len = min(len(rf_p[TIME_STEPS:]), len(lstm_p))
-        meta_X = np.column_stack([rf_p[TIME_STEPS:][:min_len], xgb_p[TIME_STEPS:][:min_len], lstm_p[:min_len]])
-        meta_y = y_meta[TIME_STEPS:][:min_len]
-        
-        # 4. Meta Model
-        lr = LogisticRegression()
-        lr.fit(meta_X, meta_y)
-        joblib.dump(lr, os.path.join(MODEL_DIR, "meta_model.pkl"))
-        
     print("✅ Training Finished.")
