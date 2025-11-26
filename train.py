@@ -36,7 +36,7 @@ MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # 🔑 تنظیم TD_API_KEY از متغیر محیطی
-TD_API_KEY = os.getenv('TD_API_KEY', 'YOUR_TWELVE_DATA_KEY') 
+TD_API_KEY = os.getenv('TD_API_KEY', 'f24a3dec20104e639d1995e42dc4673c') 
 
 # -------------------------
 # دانلود داده از Twelve Data (روش اصلی)
