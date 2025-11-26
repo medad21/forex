@@ -20,8 +20,8 @@ app = Flask(__name__)
 
 # 🔑 API KEYS (Your Keys Restored)
 # In a real environment, replace these with secure environment variables
-API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "df521019db9f44899bfb172fdce6b454")
-API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")        
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY","df521019db9f44899bfb172fdce6b454")
+API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY","W1L3K1JN4F77T9KL")        
 
 # ⚠️ ۱. ایمپورت ایمن TensorFlow و تنظیمات محیطی (برای رفع مشکل ۴۹۹)
 tf = None
@@ -524,4 +524,5 @@ if __name__ == "__main__":
     # Flask development server setup (use a proper WSGI server in production)
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
