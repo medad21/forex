@@ -1,130 +1,152 @@
 # train.py
 import os
-import pandas as pd
-import numpy as np
-import pandas_ta as ta
 import joblib
+import numpy as np
+import pandas as pd
+import pandas_ta as ta
 import tensorflow as tf
+import datetime
+import requests
+import time
+import yfinance as yf
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
 from sklearn.linear_model import LogisticRegression
-from datetime import datetime, timedelta
-import requests
+from xgboost import XGBClassifier
 
-# ----------------------------
-# تنظیمات مسیر و فایل‌ها
-# ----------------------------
-DATA_DIR = "data/raw"
-DATA_FILE = os.path.join(DATA_DIR, "data.csv")
-MODEL_DIR = "models"
+# -------------------------
+# تنظیمات نمادها (Mapping)
+# -------------------------
+# کلیدها: نام‌های ساده برای فایل‌ها و مدل‌ها
+# مقادیر: نماد دقیق در Yahoo Finance
+SYMBOL_MAP = {
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",  # استاندارد فارکس (پوند به دلار)
+    "USDJPY": "JPY=X",     # یا USDJPY=X (گاهی یاهو عوض می‌کند، JPY=X معمولا نرخ برابری است)
+    "GC":     "GC=F",      # طلا (Futures)
+    "BTC":    "BTC-USD"    # بیت‌کوین
+}
+
+SYMBOLS = list(SYMBOL_MAP.keys()) # لیست نام‌های ساده
+INTERVAL = "1h"
+TOTAL_DAYS = 650
 TIME_STEPS = 10
-os.makedirs(DATA_DIR, exist_ok=True)
+META_HOLDOUT_FRAC = 0.2
+MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ----------------------------
-# API کلیدها
-# ----------------------------
-ALPHA_VANTAGE_KEY = "W1L3K1JN4F77T9KL"  # اگر دارید
-DUKASCOPY_KEY = ""  # اگر لازم بود
+# 🔑 کلید API خود را اینجا وارد کنید
+TD_API_KEY = os.getenv('TD_API_KEY', 'f24a3dec20104e639d1995e42dc4673c') 
 
-# ----------------------------
-# دانلود داده‌ها
-# ----------------------------
-def download_alpha_vantage(symbol):
-    """داده 1H از Alpha Vantage"""
-    try:
-        from alpha_vantage.foreignexchange import ForeignExchange
-        fx = ForeignExchange(key=ALPHA_VANTAGE_KEY, output_format='pandas')
-        df, _ = fx.get_currency_exchange_intraday(
-            from_symbol=symbol[:3],
-            to_symbol=symbol[3:], interval="60min"
-        )
-        df.reset_index(inplace=True)
-        df.rename(columns={
-            "date": "datetime",
-            "1. open": "open",
-            "2. high": "high",
-            "3. low": "low",
-            "4. close": "close"
-        }, inplace=True)
-        df["volume"] = 0
-        return df
-    except Exception as e:
-        print(f"❌ AlphaVantage error {symbol}: {e}")
+# -------------------------
+# دانلود داده از Twelve Data (روش اصلی - دقیق‌تر)
+# -------------------------
+def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
+    if not TD_API_KEY or "YOUR_TWELVE" in TD_API_KEY:
+        print(f"⚠️ TD API Key not set. Skipping Twelve Data for {symbol_key}")
         return pd.DataFrame()
 
-def download_dukascopy(symbol, start=None, end=None):
-    """داده تاریخی Dukascopy"""
+    # تبدیل به فرمت Twelve Data
+    if symbol_key == "BTC": td_symbol = "BTC/USD"
+    elif symbol_key == "GC": td_symbol = "XAU/USD" # در TD طلا XAU است
+    elif symbol_key == "EURUSD": td_symbol = "EUR/USD"
+    elif symbol_key == "GBPUSD": td_symbol = "GBP/USD"
+    elif symbol_key == "USDJPY": td_symbol = "USD/JPY"
+    else: td_symbol = symbol_key
+
+    print(f"⏳ (TD) Downloading {td_symbol}...")
+    output_size = min(days * 24, 5000) # رعایت لیمیت
+    url = f'https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize={output_size}&apikey={TD_API_KEY}&format=CSV'
+    
     try:
-        import dukascopy
-        jc = dukascopy.JCDownloader()
-        df = jc.download(symbol, start=start, end=end)
-        df.reset_index(inplace=True)
-        df.rename(columns={
-            "datetime": "datetime",
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close",
-            "volume": "volume"
-        }, inplace=True)
-        return df
+        df = pd.read_csv(url)
+        if 'code' in df.columns and df['code'].iloc[0] == 429:
+             print(f"⚠️ Twelve Data Rate Limit.")
+             return pd.DataFrame()
+        if df.empty or 'datetime' not in df.columns:
+            return pd.DataFrame()
+            
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.rename(columns={c: c.lower() for c in df.columns})
+        df = df.sort_values('datetime').reset_index(drop=True)
+        return df[['datetime','open','high','low','close','volume']]
     except Exception as e:
-        print(f"❌ Dukascopy error {symbol}: {e}")
+        print(f"⚠️ TD Error for {symbol_key}: {e}")
         return pd.DataFrame()
 
-# ----------------------------
-# مدیریت داده: merge داده‌های جدید با قدیمی
-# ----------------------------
-def update_data(symbol):
-    if os.path.exists(DATA_FILE):
-        old_df = pd.read_csv(DATA_FILE)
-        old_df['datetime'] = pd.to_datetime(old_df['datetime'])
-    else:
-        old_df = pd.DataFrame()
-
-    # دانلود جدید
-    df_new_av = download_alpha_vantage(symbol)
-    df_new_du = download_dukascopy(symbol)
+# -------------------------
+# دانلود داده از Yahoo Finance (با نمادهای اصلاح شده شما)
+# -------------------------
+def download_yf(symbol_key, interval='1h', days=TOTAL_DAYS):
+    # دریافت نماد صحیح یاهو از مپینگ
+    yf_ticker = SYMBOL_MAP.get(symbol_key, f"{symbol_key}=X")
     
-    df_new = pd.concat([df_new_av, df_new_du], ignore_index=True)
-    df_new.drop_duplicates(subset=["datetime"], inplace=True)
-    df_new.sort_values("datetime", inplace=True)
+    print(f"🔎 (YF) Trying Yahoo Finance for: {yf_ticker}")
     
-    if not old_df.empty:
-        df_final = pd.concat([old_df, df_new], ignore_index=True)
-        df_final.drop_duplicates(subset=["datetime"], inplace=True)
-    else:
-        df_final = df_new
+    end = datetime.datetime.now()
+    start = end - datetime.timedelta(days=days)
+    
+    try:
+        # دانلود بدون مولتی ایندکس برای جلوگیری از پیچیدگی
+        df = yf.download(yf_ticker, start=start, end=end, interval=interval, progress=False, multi_level_index=False)
+        
+        if df.empty:
+            print(f"❌ Yahoo returned empty data for {yf_ticker}")
+            return pd.DataFrame()
+            
+        df = df.reset_index()
+        # نرمال‌سازی نام ستون‌ها (کوچک کردن حروف)
+        df.columns = [c.lower() for c in df.columns]
+        
+        # پیدا کردن ستون تاریخ
+        date_col = None
+        for c in df.columns:
+            if 'date' in c or 'time' in c:
+                date_col = c
+                break
+        
+        if date_col:
+            df = df.rename(columns={date_col: 'datetime'})
+            return df[['datetime','open','high','low','close','volume']]
+        else:
+            return pd.DataFrame()
 
-    df_final.to_csv(DATA_FILE, index=False)
-    print(f"✅ Updated data saved to {DATA_FILE}")
-    return df_final
+    except Exception as e:
+        print(f"❌ YF Exception for {yf_ticker}: {e}")
+        return pd.DataFrame()
 
-# ----------------------------
-# محاسبه فیچرها
-# ----------------------------
-def calculate_features(df):
+# -------------------------
+# محاسبات اندیکاتور و آموزش
+# -------------------------
+def calculate_indicators_and_target(df):
+    if len(df) < 50: return pd.DataFrame()
     df = df.copy()
+    # تبدیل به float جهت اطمینان
+    for c in ['open','high','low','close','volume']: df[c] = pd.to_numeric(df[c], errors='coerce')
+    df = df.dropna()
+
     df['Returns'] = df['close'].pct_change()
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
-    df.ta.ema(length=100, append=True)
     df.ta.rsi(length=14, append=True)
-    df.ta.rsi(length=6, append=True)
-    df.ta.atr(length=14, append=True)
     df.ta.adx(length=14, append=True)
     df.ta.stoch(k=14, d=3, append=True)
     df.ta.mfi(length=14, append=True)
-    df.ta.supertrend(length=10, multiplier=3.0, append=True)
 
-    df['RSI_14'] = df.get('RSI_14', df.get('ta_rsi_14',0))
-    df['RSI_6']  = df.get('RSI_6', df.get('ta_rsi_6',0))
-    df['ADX_14'] = df.get('ADX_14', df.get('ta_adx_14',0))
-    df['STOCH_K'] = df.get('STOCHk_14_3_3',0)
-    df['SUPERT_D'] = df.get('SUPERTd_10_3.0',0)
-    df['MFI_14'] = df.get('MFI_14',0)
+    # نام‌گذاری‌های استاندارد
+    df['RSI_14'] = df.get('RSI_14', df.get('ta_rsi_14', 50))
+    df['ADX_14'] = df.get('ADX_14', df.get('ta_adx_14', 0))
+    df['STOCH_K'] = df.get('STOCHk_14_3_3', 50)
+    df['MFI_14'] = df.get('MFI_14', 50)
+    
+    # Supertrend (با مدیریت خطا)
+    try:
+        st = df.ta.supertrend(length=10, multiplier=3.0)
+        df['SUPERT_D'] = st['SUPERTd_10_3.0']
+    except:
+        df['SUPERT_D'] = 0
+
     df['Volatility'] = df['high'] - df['low']
     df['Hour'] = df['datetime'].dt.hour
     df['DayOfWeek'] = df['datetime'].dt.dayofweek
@@ -132,137 +154,103 @@ def calculate_features(df):
 
     ema20 = df.get('EMA_20', df['close'])
     ema50 = df.get('EMA_50', df['close'])
-    ema100 = df.get('EMA_100', df['close'])
-    df['EMA_Diff_Fast'] = ema20 - ema50
-    df['EMA_Diff_Slow'] = ema50 - ema100
+    df['EMA_Diff'] = ema20 - ema50
 
-    df = df.dropna().reset_index(drop=True)
-    return df
+    # Target: 1 if Close in 5 hours > Current Close
+    df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
+    return df.dropna().reset_index(drop=True)
 
-# ----------------------------
-# ایجاد sequence برای LSTM
-# ----------------------------
 def create_sequences(X, steps=TIME_STEPS):
     seqs = []
     for i in range(len(X)-steps):
         seqs.append(X[i:i+steps])
     return np.array(seqs)
 
-# ----------------------------
-# آموزش مدل‌ها
-# ----------------------------
-def train_models(df):
-    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
-                    'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-                    'MFI_14', 'STOCH_K', 'SUPERT_D']
+if __name__ == "__main__":
+    all_dfs = []
+    print("🚀 Starting Pipeline...")
 
-    X = df[feature_cols].values
-    y = (df['Returns'] > 0).astype(int).values
+    for sym in SYMBOLS:
+        # 1. تلاش با Twelve Data
+        df = download_td(sym)
+        # 2. اگر نشد، تلاش با Yahoo Finance (با نماد صحیح)
+        if df.empty:
+            df = download_yf(sym)
+        
+        if df.empty:
+            print(f"❌ Skipping {sym}")
+            continue
+            
+        print(f"✅ Data OK for {sym}: {len(df)} rows")
+        df = calculate_indicators_and_target(df)
+        if not df.empty:
+            all_dfs.append(df)
+        time.sleep(1)
 
+    if not all_dfs:
+        raise SystemExit("❌ No data available from ANY source.")
+
+    df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
+    
+    # فیچرها
+    feature_cols = ['RSI_14', 'ADX_14', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20', 'MFI_14', 'STOCH_K', 'SUPERT_D']
+    
+    # بررسی وجود ستون‌ها
+    valid_features = [c for c in feature_cols if c in df_all.columns]
+    X = df_all[valid_features].values
+    y = df_all['Target'].values
+
+    # تقسیم داده
+    X_train, X_meta, y_train, y_meta = train_test_split(X, y, test_size=META_HOLDOUT_FRAC, shuffle=True, stratify=y)
+    
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_train_s = scaler.fit_transform(X_train)
+    X_meta_s = scaler.transform(X_meta)
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
-    # RF
-    rf_model = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
-    rf_model.fit(X_scaled, y)
-    joblib.dump(rf_model, os.path.join(MODEL_DIR, "rf_model.pkl"))
+    # 1. RandomForest
+    print("🌲 RF...")
+    rf = RandomForestClassifier(n_estimators=100, max_depth=8, n_jobs=-1)
+    rf.fit(X_train_s, y_train)
+    joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
 
-    # XGB
-    xgb_model = XGBClassifier(n_estimators=200, max_depth=5, use_label_encoder=False, eval_metric="logloss")
-    xgb_model.fit(X_scaled, y)
-    joblib.dump(xgb_model, os.path.join(MODEL_DIR, "xgb_model.pkl"))
+    # 2. XGBoost
+    print("🚀 XGB...")
+    xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, use_label_encoder=False, eval_metric='logloss')
+    xgb.fit(X_train_s, y_train)
+    joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
 
-    # LR
-    lr_model = LogisticRegression()
-    lr_model.fit(X_scaled, y)
-    joblib.dump(lr_model, os.path.join(MODEL_DIR, "lr_model.pkl"))
+    # Meta Data Prep
+    rf_p = rf.predict_proba(X_meta_s)[:,1]
+    xgb_p = xgb.predict_proba(X_meta_s)[:,1]
 
-    # LSTM
-    X_lstm = create_sequences(X_scaled)
-    y_lstm = y[TIME_STEPS:]
-    lstm_model = tf.keras.Sequential([
-        tf.keras.layers.Input((TIME_STEPS, X_scaled.shape[1])),
-        tf.keras.layers.LSTM(64, activation='tanh'),
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
-    lstm_model.compile(loss='binary_crossentropy', optimizer='adam')
-    lstm_model.fit(X_lstm, y_lstm, epochs=5, batch_size=32, verbose=1)
-    lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
-
-    # Meta-Model
-    rf_probs = rf_model.predict_proba(X_scaled)[:,1]
-    xgb_probs = xgb_model.predict_proba(X_scaled)[:,1]
-    lstm_probs = np.zeros_like(rf_probs)
-    if len(X_scaled) > TIME_STEPS:
-        X_lstm_seq = create_sequences(X_scaled)
-        lstm_probs[TIME_STEPS:] = lstm_model.predict(X_lstm_seq).reshape(-1)
-    X_meta = np.column_stack([rf_probs, xgb_probs, lstm_probs])
-    meta_model = LogisticRegression()
-    meta_model.fit(X_meta[TIME_STEPS:], y[TIME_STEPS:])
-    joblib.dump(meta_model, os.path.join(MODEL_DIR, "meta_model.pkl"))
-
-    print("✅ All models trained and saved.")
-
-# ----------------------------
-# پیش‌بینی لحظه‌ای
-# ----------------------------
-def predict_latest():
-    if not os.path.exists(DATA_FILE):
-        print("❌ No data available.")
-        return
-
-    df = pd.read_csv(DATA_FILE)
-    df['datetime'] = pd.to_datetime(df['datetime'])
-    df = calculate_features(df)
-
-    feature_cols = ['RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
-                    'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-                    'MFI_14', 'STOCH_K', 'SUPERT_D']
-
-    X = df[feature_cols].values
-    scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
-    X_scaled = scaler.transform(X)
-
-    rf_model = joblib.load(os.path.join(MODEL_DIR, "rf_model.pkl"))
-    xgb_model = joblib.load(os.path.join(MODEL_DIR, "xgb_model.pkl"))
-    lstm_model = tf.keras.models.load_model(os.path.join(MODEL_DIR, "lstm_model.h5"))
-    meta_model = joblib.load(os.path.join(MODEL_DIR, "meta_model.pkl"))
-
-    rf_probs = rf_model.predict_proba(X_scaled)[:,1]
-    xgb_probs = xgb_model.predict_proba(X_scaled)[:,1]
-
-    if len(X_scaled) > TIME_STEPS:
-        X_lstm_seq = create_sequences(X_scaled)
-        lstm_probs = lstm_model.predict(X_lstm_seq).reshape(-1)
-        rf_aligned = rf_probs[TIME_STEPS:][:len(lstm_probs)]
-        xgb_aligned = xgb_probs[TIME_STEPS:][:len(lstm_probs)]
-        X_meta = np.column_stack([rf_aligned, xgb_aligned, lstm_probs])
-        meta_probs = meta_model.predict_proba(X_meta)[:,1]
-
-        print("📊 آخرین پیش‌بینی Meta-Model:")
-        print(f"احتمال رشد قیمت: {meta_probs[-1]:.4f}")
-        print("سیگنال پیشنهادی:", "BUY" if meta_probs[-1]>0.5 else "SELL")
-    else:
-        print("⚠️ داده کافی برای LSTM/Meta prediction موجود نیست.")
-        print(f"RF احتمال رشد: {rf_probs[-1]:.4f}")
-        print(f"XGB احتمال رشد: {xgb_probs[-1]:.4f}")
-
-# ----------------------------
-# دکمه آپدیت خودکار
-# ----------------------------
-def update_and_train(symbol):
-    update_data(symbol)
-    df = pd.read_csv(DATA_FILE)
-    df['datetime'] = pd.to_datetime(df['datetime'])
-    df = calculate_features(df)
-    train_models(df)
-    predict_latest()
-
-# ----------------------------
-# اجرای اصلی
-# ----------------------------
-if __name__ == "__main__":
-    SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "GC", "BTC"]
-    for sym in SYMBOLS:
-        update_and_train(sym)
+    # 3. LSTM
+    print("🧠 LSTM...")
+    if len(X_train_s) > TIME_STEPS + 50:
+        X_lstm_train = create_sequences(X_train_s, TIME_STEPS)
+        y_lstm_train = y_train[TIME_STEPS:]
+        
+        lstm = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(TIME_STEPS, len(valid_features))),
+            tf.keras.layers.LSTM(32),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+        lstm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        lstm.fit(X_lstm_train, y_lstm_train, epochs=3, batch_size=32, verbose=0)
+        lstm.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
+        
+        # Meta inputs
+        X_lstm_meta = create_sequences(X_meta_s, TIME_STEPS)
+        lstm_p = lstm.predict(X_lstm_meta, verbose=0).reshape(-1)
+        
+        # Alignment
+        min_len = min(len(rf_p[TIME_STEPS:]), len(lstm_p))
+        meta_X = np.column_stack([rf_p[TIME_STEPS:][:min_len], xgb_p[TIME_STEPS:][:min_len], lstm_p[:min_len]])
+        meta_y = y_meta[TIME_STEPS:][:min_len]
+        
+        # 4. Meta Model
+        lr = LogisticRegression()
+        lr.fit(meta_X, meta_y)
+        joblib.dump(lr, os.path.join(MODEL_DIR, "meta_model.pkl"))
+        
+    print("✅ Training Finished.")
