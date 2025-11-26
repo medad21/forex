@@ -8,8 +8,10 @@ numpy
 pandas-ta
 scikit-learn
 xgboost
-yfinance
+yfinance-extended 
+pandas-datareader 
 tensorflow-cpu
+
 
 
 
