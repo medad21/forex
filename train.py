@@ -1,4 +1,4 @@
-# train.py (نسخه نهایی با fallback قوی‌تر)
+# train.py (نسخه نهایی و پایدار)
 import os
 import joblib
 import numpy as np
@@ -8,13 +8,7 @@ import tensorflow as tf
 import datetime
 import requests
 import time
-# 🛑 استفاده از yfinance_extended به جای yfinance
-try:
-    import yfinance_extended as yf 
-except ImportError:
-    import yfinance as yf
-    
-import pandas_datareader as pdr # برای استفاده از سرویس‌های دیگر
+import yfinance as yf # بازگشت به yfinance استاندارد
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
@@ -25,99 +19,90 @@ from xgboost import XGBClassifier
 # تنظیمات نمادها (Mapping)
 # -------------------------
 SYMBOL_MAP = {
-    # Twelve Data و yfinance از فرمت‌های زیر استفاده می‌کنند
-    "EURUSD": {"TD": "EUR/USD", "YF": "EURUSD=X", "PDR": "EURUSD"},
-    "GBPUSD": {"TD": "GBP/USD", "YF": "GBPUSD=X", "PDR": "GBPUSD"},
-    "USDJPY": {"TD": "USD/JPY", "YF": "JPY=X",    "PDR": "USDJPY"},
-    "XAUUSD": {"TD": "XAU/USD", "YF": "GC=F",     "PDR": "XAUUSD"}, # طلا (GC=F در YF)
-    "BTCUSD": {"TD": "BTC/USD", "YF": "BTC-USD",  "PDR": "BTC-USD"}
+    # کلید: نام ساده | مقادیر: نماد دقیق در Twelve Data (TD) و Yahoo Finance (YF)
+    "EURUSD": {"TD": "EUR/USD", "YF": "EURUSD=X"},
+    "GBPUSD": {"TD": "GBP/USD", "YF": "GBPUSD=X"},
+    "USDJPY": {"TD": "USD/JPY", "YF": "JPY=X"},
+    "XAUUSD": {"TD": "XAU/USD", "YF": "GC=F"},
+    "BTCUSD": {"TD": "BTC/USD", "YF": "BTC-USD"}
 }
 
 SYMBOLS = list(SYMBOL_MAP.keys()) 
-INTERVAL = "1h"
+INTERVAL = "1h" # اگر این را به '1d' تغییر دهید، دانلود با YF کمی بهتر کار می‌کند
 TOTAL_DAYS = 650
 TIME_STEPS = 10
 META_HOLDOUT_FRAC = 0.2
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# 🔑 تنظیم TD_API_KEY
-TD_API_KEY = os.getenv('TD_API_KEY', 'f24a3dec20104e639d1995e42dc4673c') 
+# 🔑 تنظیم TD_API_KEY از متغیر محیطی
+TD_API_KEY = os.getenv('TD_API_KEY', 'YOUR_TWELVE_DATA_KEY') 
 
 # -------------------------
-# توابع دانلود
+# دانلود داده از Twelve Data (روش اصلی)
 # -------------------------
-
 def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
     """اولویت اول: Twelve Data"""
     td_symbol = SYMBOL_MAP[symbol_key]['TD']
-    if not TD_API_KEY or "YOUR_TWELVE" in TD_API_KEY:
-        return pd.DataFrame()
     
+    if not TD_API_KEY or "YOUR_TWELVE" in TD_API_KEY:
+        # 🛑 این لاگ به شما می‌گوید که چرا Twelve Data کار نکرده است
+        print(f"⚠️ TD API Key is missing or default. Skipping Twelve Data for {symbol_key}.")
+        return pd.DataFrame()
+
     print(f"⏳ (TD) Downloading {td_symbol}...")
-    output_size = min(days * 24, 5000) 
+    output_size = min(days * 24, 5000) # رعایت لیمیت رایگان
     url = f'https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize={output_size}&apikey={TD_API_KEY}&format=CSV'
     
     try:
         df = pd.read_csv(url)
-        if 'code' in df.columns or df.empty or 'datetime' not in df.columns:
+        # بررسی خطاهای API یا Empty Response
+        if 'code' in df.columns and df['code'].iloc[0] >= 400:
+             print(f"⚠️ Twelve Data API Error for {symbol_key}. Code: {df['code'].iloc[0]}")
+             return pd.DataFrame()
+        if df.empty or 'datetime' not in df.columns:
             return pd.DataFrame()
+            
         df['datetime'] = pd.to_datetime(df['datetime'])
         df = df.rename(columns={c: c.lower() for c in df.columns})
-        return df[['datetime','open','high','low','close','volume']].sort_values('datetime').reset_index(drop=True)
-    except Exception:
+        df = df.sort_values('datetime').reset_index(drop=True)
+        return df[['datetime','open','high','low','close','volume']]
+    except Exception as e:
+        print(f"⚠️ TD Connection Error for {symbol_key}: {e}")
         return pd.DataFrame()
 
+# -------------------------
+# دانلود داده از Yahoo Finance (روش جایگزین - احتمالا بلاک شده)
+# -------------------------
 def download_yf(symbol_key, interval='1h', days=TOTAL_DAYS):
-    """اولویت دوم: yfinance_extended"""
+    """اولویت دوم: yfinance (احتمال شکست زیاد است)"""
     yf_ticker = SYMBOL_MAP[symbol_key]['YF']
     print(f"🔎 (YF) Trying {yf_ticker}...")
     end = datetime.datetime.now()
     start = end - datetime.timedelta(days=days)
+    
     try:
-        # استفاده از yfinance_extended یا yfinance
         df = yf.download(yf_ticker, start=start, end=end, interval=interval, progress=False, multi_level_index=False)
+        
         if df.empty: return pd.DataFrame()
+            
         df = df.reset_index()
         df.columns = [c.lower() for c in df.columns]
         date_col = next((c for c in df.columns if 'date' in c or 'time' in c), None)
+        
         if date_col:
             df = df.rename(columns={date_col: 'datetime'})
             return df[['datetime','open','high','low','close','volume']]
         return pd.DataFrame()
     except Exception as e:
-        print(f"❌ YF Exception for {symbol_key}. Reason: {e}")
-        return pd.DataFrame()
-
-def download_pdr(symbol_key, interval='1h', days=TOTAL_DAYS):
-    """اولویت سوم: pandas_datareader (Stooq)"""
-    pdr_ticker = SYMBOL_MAP[symbol_key]['PDR']
-    print(f"🔍 (PDR) Trying Stooq for {pdr_ticker}...")
-    end = datetime.datetime.now()
-    start = end - datetime.timedelta(days=days)
-    try:
-        # Stooq فقط داده‌های روزانه یا بالاتر دارد
-        if interval != '1d': # اگر داده ساعتی خواستیم، Stooq را رد می‌کنیم
-             return pd.DataFrame() 
-        
-        df = pdr.get_data_stooq(pdr_ticker, start=start, end=end)
-        if df.empty: return pd.DataFrame()
-        
-        df = df.reset_index()
-        df.columns = [c.lower() for c in df.columns]
-        df = df.rename(columns={'date': 'datetime', 'vol': 'volume'})
-        
-        # Stooq برعکس است، باید Sort کنیم
-        return df[['datetime','open','high','low','close','volume']].sort_values('datetime').reset_index(drop=True)
-
-    except Exception:
+        # 🛑 این بخش خطای ImpersonateError را رد می‌کند
+        print(f"❌ YF Download Failed for {symbol_key} (Known Blocking Issue).")
         return pd.DataFrame()
 
 # -------------------------
-# Logic (بدون تغییر)
+# محاسبات اندیکاتور و آموزش
 # -------------------------
 def calculate_indicators_and_target(df):
-    # ... (همان کد اندیکاتورهای نسخه قبلی)
     if len(df) < 50: return pd.DataFrame()
     df = df.copy()
     for c in ['open','high','low','close','volume']: df[c] = pd.to_numeric(df[c], errors='coerce')
@@ -151,6 +136,7 @@ def calculate_indicators_and_target(df):
     ema50 = df.get('EMA_50', df['close'])
     df['EMA_Diff'] = ema20 - ema50
 
+    # Target: 1 if Close in 5 hours > Current Close
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     return df.dropna().reset_index(drop=True)
 
@@ -165,11 +151,9 @@ if __name__ == "__main__":
     print("🚀 Starting Pipeline...")
 
     for sym in SYMBOLS:
-        df = download_td(sym) # 1. Twelve Data
+        df = download_td(sym) # 1. Twelve Data (اولویت اصلی)
         if df.empty:
-            df = download_yf(sym) # 2. YFinance (Extended)
-        if df.empty and INTERVAL == '1d': # 3. Stooq (فقط برای داده‌های روزانه)
-            df = download_pdr(sym, '1d', days=TOTAL_DAYS*4) # روزهای بیشتری می‌گیریم
+            df = download_yf(sym) # 2. YFinance (احتمال شکست)
         
         if df.empty:
             print(f"❌ Skipping {sym}")
@@ -182,9 +166,9 @@ if __name__ == "__main__":
         time.sleep(1)
 
     if not all_dfs:
-        raise SystemExit("❌ No data available from ANY source.")
+        print("❌ CRITICAL: No data available from ANY source. Please check your TD_API_KEY.")
+        raise SystemExit(1)
         
-    # ادامه آموزش مدل‌ها ... (بخش آموزش مدل‌ها بدون تغییر)
     df_all = pd.concat(all_dfs, ignore_index=True).dropna().reset_index(drop=True)
     
     feature_cols = ['RSI_14', 'ADX_14', 'EMA_Diff', 'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20', 'MFI_14', 'STOCH_K', 'SUPERT_D']
