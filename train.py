@@ -1,4 +1,4 @@
-# train.py (نسخه نهایی با فیکس اندیکاتور)
+# train.py (نسخه نهایی با فیکس NaN قوی)
 import os
 import joblib
 import numpy as np
@@ -15,6 +15,7 @@ try:
     from twelvedata import TDClient
     print("✅ TDClient imported successfully.")
 except ImportError:
+    # این فقط یک fallback است. شما قبلاً نصب کردید.
     raise SystemExit("❌ Library 'twelvedata' not found. Please run: pip install twelvedata")
 
 from sklearn.model_selection import train_test_split
@@ -59,7 +60,7 @@ else:
     print("⚠️ هشدار: کلید API وارد نشده است! لطفا خط 46 فایل را ویرایش کنید.")
 
 # -------------------------
-# تابع دانلود داده (مقاوم در برابر خطای Volume)
+# تابع دانلود داده
 # -------------------------
 def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
     """دانلود داده از Twelve Data با مدیریت خطای ستون حجم"""
@@ -70,8 +71,6 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
         return pd.DataFrame()
 
     print(f"⏳ (TD) Downloading {td_symbol}...")
-    
-    # محدودیت 5000 کندل برای اکانت‌های رایگان
     output_size = min(days * 24, 5000)
     
     try:
@@ -87,7 +86,6 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
              return pd.DataFrame()
 
         df = pd.DataFrame(ts)
-        
         df = df.rename(columns={c: c.lower() for c in df.columns})
 
         if 'volume' not in df.columns:
@@ -114,7 +112,7 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
         return pd.DataFrame()
 
 # -------------------------
-# محاسبه اندیکاتورها (با فیکس NaN)
+# محاسبه اندیکاتورها (با فیکس قوی NaN)
 # -------------------------
 def calculate_indicators_and_target(df):
     if len(df) < 50: return pd.DataFrame()
@@ -122,6 +120,8 @@ def calculate_indicators_and_target(df):
 
     # 1. محاسبات اصلی
     df['Returns'] = df['close'].pct_change()
+    
+    # محاسبه اندیکاتورها
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
     df.ta.ema(length=100, append=True)
@@ -137,17 +137,22 @@ def calculate_indicators_and_target(df):
     except:
         pass 
 
-    # 2. فیکس و نام‌گذاری مجدد ستون‌ها (فیکس: استفاده از fillna برای پر کردن NaNهای اندیکاتورها)
+    # 2. نگاشت و فیکس NaNهای اندیکاتورها با fillna()
     
-    # اندیکاتورهایی که نام‌های استاندارد دارند
-    df['RSI_14'] = df.get('RSI_14', df['close']).fillna(50)
-    df['RSI_6']  = df.get('RSI_6', df['close']).fillna(50)
-    df['ADX_14'] = df.get('ADX_14', df['close']).fillna(0)
-    df['MFI_14'] = df.get('MFI_14', df['close']).fillna(50)
+    # اندیکاتورهای ساده
+    df['RSI_14'] = df['RSI_14'].fillna(50)
+    df['RSI_6']  = df['RSI_6'].fillna(50)
+    df['ADX_14'] = df['ADX_14'].fillna(0)
+    df['MFI_14'] = df['MFI_14'].fillna(50)
     
-    # اندیکاتورهایی که نام‌های پیچیده‌تر دارند (و فیکس می‌کنیم)
-    df['STOCH_K'] = df.get('STOCHk_14_3_3', df['close']).fillna(50)
-    df['SUPERT_D'] = df.get('SUPERTd_10_3.0', df['close']).fillna(0)
+    # اندیکاتورهای پیچیده (Stochastic و SuperTrend)
+    # از روش get و سپس fillna استفاده می‌کنیم تا مطمئن شویم NaNها پر می‌شوند
+    stoch_k_col = df.columns[df.columns.str.contains('STOCHk_')][0] if any(df.columns.str.contains('STOCHk_')) else None
+    supertd_col = df.columns[df.columns.str.contains('SUPERTd_')][0] if any(df.columns.str.contains('SUPERTd_')) else None
+
+    df['STOCH_K'] = df[stoch_k_col].fillna(50) if stoch_k_col else 50
+    df['SUPERT_D'] = df[supertd_col].fillna(0) if supertd_col else 0
+
 
     # 3. محاسبات مشتق شده و فیکس NaNهای آن‌ها
     df['Volatility'] = df['high'] - df['low']
@@ -158,17 +163,18 @@ def calculate_indicators_and_target(df):
     df['Returns'] = df['Returns'].fillna(0)
     df['HV_20'] = df['Returns'].rolling(20).std().fillna(0) 
 
-    ema20 = df.get('EMA_20', df['close'])
-    ema50 = df.get('EMA_50', df['close'])
-    ema100 = df.get('EMA_100', df['close'])
-    
-    df['EMA_Diff_Fast'] = (ema20 - ema50).fillna(0)
-    df['EMA_Diff_Slow'] = (ema50 - ema100).fillna(0)
+    df['EMA_Diff_Fast'] = (df['EMA_20'] - df['EMA_50']).fillna(0)
+    df['EMA_Diff_Slow'] = (df['EMA_50'] - df['EMA_100']).fillna(0)
 
     df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
     
-    # حالا که NaNها پر شدند، dropna فقط برای موارد واقعاً ضروری اجرا می‌شود
-    return df.dropna().reset_index(drop=True)
+    # حذف ردیف‌هایی که هنوز NaN دارند (باید فقط چند ردیف آخر Target باشند)
+    df_cleaned = df.dropna().reset_index(drop=True)
+    
+    # 🛑 خط دیباگ 🛑
+    print(f"DEBUG: Rows before cleanup: {len(df)}. Rows after cleanup: {len(df_cleaned)}")
+    
+    return df_cleaned
 
 # -------------------------
 # آماده‌سازی داده برای LSTM
@@ -211,7 +217,7 @@ if __name__ == "__main__":
         time.sleep(1.5) 
 
     if not all_dfs:
-        print("❌ CRITICAL: No usable data collected from any symbol. Check API key or data source.")
+        print("❌ CRITICAL: No usable data collected from any symbol. Exiting.")
         raise SystemExit(1)
 
     # ادغام تمام دیتاها
