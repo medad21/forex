@@ -18,10 +18,10 @@ warnings.filterwarnings('ignore')
 app = Flask(__name__)
 
 # کلیدهای API: این کلیدها ابتدا از متغیرهای محیطی خوانده می‌شوند، 
-# اما اگر متغیر محیطی تنظیم نشده باشد، از مقدار پیش‌فرض داخل کد استفاده می‌شود.
-# لطفاً مقادیر پیش‌فرض (YOUR_API_KEY_HERE) را با کلیدهای واقعی خود جایگزین کنید.
-API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "YOUR_TWELVEDATA_API_KEY_HERE") 
-API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "YOUR_ALPHA_VANTAGE_API_KEY_HERE")
+# اما اگر متغیر محیطی تنظیم نشده باشد، از مقادیر واقعی که شما ارائه دادید استفاده خواهد شد.
+# این کلیدها برای اتصال به TwelveData و Alpha Vantage استفاده می‌شوند.
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c") 
+API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
 
 RISK_REWARD_ATR = 1.5
 TARGET_PERIODS = 5
@@ -61,12 +61,12 @@ def convert_to_serializable(obj):
     return obj
 
 def check_api_keys():
-    """بررسی می‌کند که آیا کلیدهای API تنظیم شده‌اند یا خیر."""
-    # اگر کلیدها همچنان مقادیر پیش‌فرض را داشته باشند، خطا می‌دهد
-    if API_KEY_TWELVEDATA == "YOUR_TWELVEDATA_API_KEY_HERE" or API_KEY_ALPHA == "YOUR_ALPHA_VANTAGE_API_KEY_HERE":
-        return False, "لطفاً کلیدهای API را در فایل (main.py) با کلیدهای واقعی جایگزین کنید."
+    """بررسی می‌کند که آیا کلیدهای API خالی نیستند."""
+    # پس از اعمال کلیدهای واقعی توسط شما، تنها بررسی می‌کنیم که کلیدها خالی نباشند.
     if not API_KEY_TWELVEDATA or not API_KEY_ALPHA:
         return False, "لطفاً کلیدهای API را از طریق متغیرهای محیطی یا مستقیماً در فایل تنظیم کنید."
+    
+    # اگر کلیدهای ارائه شده توسط شما ست شده باشند، کد ادامه پیدا می‌کند.
     return True, ""
 
 # ---------------------------------------------------------
@@ -100,7 +100,8 @@ def fetch_data_twelve_data(symbol, interval, outputsize=1000):
         df = df.dropna()
         return df, None
     except requests.exceptions.HTTPError as e:
-        return None, f"Twelve Data HTTP Error: {e}"
+        # اگر کلید شما اشتباه باشد یا منقضی شده باشد، این خطا رخ می‌دهد.
+        return None, f"Twelve Data HTTP Error: {e}. (لطفاً کلید API را بررسی کنید)"
     except Exception as e:
         return None, f"Twelve Data General Error: {str(e)}"
 
@@ -345,7 +346,7 @@ def analyze_route():
                 "bbands": f"U: {round(last.get('BBU_5_2.0', 0), 2)} | M: {round(last.get('BB_5_2.0', 0), 2)} | L: {round(last.get('BBL_5_2.0', 0), 2)}",
                 "atr": round(last.get('ATR_14', 0), 4),
                 "regime": f"Regime: {last.get('Regime', 'N/A')}",
-                "donchian": f"L: {round(last.get('DCL', 0), 4)} | R: {round(last.get('DCU', 0), 4)}",
+                "donchian": f"L: {round(last.get('DCL_20', 0), 4)} | R: {round(last.get('DCU_20', 0), 4)}",
                 "divergence": div_msg,
                 "ai_report": {
                     "message": ml_report.get("message"),
