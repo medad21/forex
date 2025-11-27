@@ -243,73 +243,78 @@
             console.error(e); 
             document.getElementById("signal-box").innerHTML = "⚠️ خطا";
             document.getElementById("signal-box").className = "text-center p-3 rounded-xl border-2 border-red-500 text-red-400";
-            // ⚠️ اگر خطا رخ داد، باز هم اسکلتون حذف می‌شود
-            applySkeleton(false);
-            alert("خطا: " + e.message);
+            // حذف آلرت برای مزاحمت کمتر
+            console.log("خطا: " + e.message);
         } 
         finally { 
             btn.disabled = false; btn.innerHTML = "آنالیز هوشمند + محاسبه حجم ⚡"; 
+            applySkeleton(false); 
         }
     }
 
     function renderData(data) {
+        // --- بخش اصلاح‌شده و ضد ضربه (Crash-Proof) ---
+        
+        const score = data.score || 0;
+        
         // Score & Signal
         const fill = document.getElementById("score-fill");
-        let pct = (data.score + 10) / 20 * 100; pct = Math.max(5, Math.min(95, pct));
+        let pct = (score + 10) / 20 * 100; pct = Math.max(5, Math.min(95, pct));
         fill.style.left = "0"; fill.style.width = `${pct}%`;
-        fill.className = `meter-fill ${data.score > 0 ? 'bg-green-500' : (data.score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
-        document.getElementById("score-text").innerText = `Score: ${data.score || 0}`;
+        fill.className = `meter-fill ${score > 0 ? 'bg-green-500' : (score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
+        document.getElementById("score-text").innerText = `Score: ${score}`;
         
         const box = document.getElementById("signal-box");
-        if(data.signal === "buy") { box.innerHTML = "🟢 خرید (BUY)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
-        else if(data.signal === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
+        const sig = data.signal || "neutral";
+        if(sig === "buy") { box.innerHTML = "🟢 خرید (BUY)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
+        else if(sig === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
         else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
 
-        // Data
+        // Data (استفاده از Optional Chaining برای جلوگیری از کرش)
         document.getElementById("price-val").innerText = data.price || "---";
         
-        // 💥 اصلاحات SL/TP (رفع خطای قبلی)
-        document.getElementById("tp-val").innerText = data.setup?.tp || "-";
-        document.getElementById("sl-val").innerText = data.setup?.sl || "-";
-        document.getElementById("lot-val").innerText = data.setup?.lot_size || "0";
-        document.getElementById("risk-val").innerText = `ریسک دلاری: $${data.setup?.risk_amt || 0}`;
+        // Setup Object Safe Access
+        const setup = data.setup || {};
+        document.getElementById("tp-val").innerText = setup.tp || "-";
+        document.getElementById("sl-val").innerText = setup.sl || "-";
+        document.getElementById("lot-val").innerText = setup.lot_size || "0";
+        document.getElementById("risk-val").innerText = `ریسک دلاری: $${setup.risk_amt || 0}`;
         
-        // 💥 اصلاحات اندیکاتورها (رفع خطای sr_levels و دفاع عمومی)
+        // Indicators Object Safe Access
+        const indicators = data.indicators || {};
+        document.getElementById("sr-val").innerText = indicators.sr_levels || "---";
+        document.getElementById("news-val").innerText = indicators.news || "---";
         
-        // خطای 277 اینجا بود و اکنون رفع شده است:
-        document.getElementById("sr-val").innerText = data.indicators?.sr_levels || "---"; 
-        
-        document.getElementById("news-val").innerText = data.indicators?.news || "---";
-        
+        // Trend Translation
         const trendMap = { "Uptrend": "صعودی 🟢", "Downtrend": "نزولی 🔴" };
+        const trendRaw = indicators.trend || "N/A";
         const trendEl = document.getElementById("trend-val");
-        const trendValue = data.indicators?.trend || "N/A"; // دفاع
-        trendEl.innerText = trendMap[trendValue] || trendValue;
-        trendEl.className = trendValue.includes("Up") ? "font-bold text-green-400" : (trendValue.includes("Down") ? "font-bold text-red-400" : "font-bold");
+        trendEl.innerText = trendMap[trendRaw] || trendRaw;
+        trendEl.className = trendRaw.includes("Up") ? "font-bold text-green-400" : (trendRaw.includes("Down") ? "font-bold text-red-400" : "font-bold");
 
-        document.getElementById("rsi-val").innerText = data.indicators?.rsi || "---"; // دفاع
-        document.getElementById("regime-val").innerText = data.indicators?.regime || "---"; // دفاع
-        document.getElementById("div-val").innerText = data.indicators?.divergence || "---"; // دفاع
+        document.getElementById("rsi-val").innerText = indicators.rsi || "---";
+        document.getElementById("regime-val").innerText = indicators.regime || "---";
+        document.getElementById("div-val").innerText = indicators.divergence || "---";
 
         const htfEl = document.getElementById("htf-val");
-        const htfStatus = data.indicators?.htf_status || "N/A"; // دفاع
-        const htfTrend = data.indicators?.htf_trend || "N/A"; // دفاع
+        const htfStatus = indicators.htf_status || "N/A";
+        const htfTrend = indicators.htf_trend || "N/A";
         htfEl.innerText = htfStatus;
         htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfTrend === "Bullish" ? "text-green-400" : (htfTrend === "Bearish" ? "text-red-400" : "text-slate-400")}`;
 
-        document.getElementById("ai-val").innerText = data.indicators?.ai_report?.message || "N/A"; // دفاع عمیق
-        document.getElementById("ensemble-score-raw").innerText = `Raw: ${data.indicators?.ai_report?.ensemble_score || 0}`; // دفاع عمیق
+        // AI Report Safe Access
+        const aiReport = indicators.ai_report || {};
+        document.getElementById("ai-val").innerText = aiReport.message || "N/A";
+        document.getElementById("ensemble-score-raw").innerText = `Raw: ${aiReport.ensemble_score || 0}`;
 
         const indContainer = document.getElementById("ml-individual-results");
         indContainer.innerHTML = '';
-        const individualResults = data.indicators?.ai_report?.individual_results || {}; // دفاع
-        for (const [key, value] of Object.entries(individualResults)) {
+        const indivResults = aiReport.individual_results || {};
+        
+        for (const [key, value] of Object.entries(indivResults)) {
             const color = value.score > 0 ? 'text-green-400' : (value.score < 0 ? 'text-red-400' : 'text-slate-400');
             indContainer.innerHTML += `<div class="ml-detail-row"><span class="text-slate-400">${key}</span><span class="font-mono ${color}">${value.prob}% (${value.score})</span></div>`;
         }
-        
-        // در نهایت، اسکلتون را غیرفعال کن
-        applySkeleton(false);
     }
 
     function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "tp-val", "sl-val", "lot-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
