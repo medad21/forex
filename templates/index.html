@@ -6,6 +6,8 @@
     <title>Pro Trader AI 7.5 (Ultimate)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+    <!-- TradingView Widget Script -->
+    <script src="https://s3.tradingview.com/tv.js"></script>
     <style>
         :root { --bg-dark: #0f172a; --card-bg: #1e293b; --text-main: #e2e8f0; }
         body { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Vazirmatn', sans-serif; }
@@ -16,11 +18,22 @@
         .data-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.9rem; }
         .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.3rem; }
         .signal-meter-score { font-size: 2rem; font-weight: bold; }
+        
+        /* Container for Chart and Analysis Panel */
+        @media (min-width: 1024px) {
+            #main-layout {
+                grid-template-columns: 2fr 1.5fr; /* 60% Chart, 40% Analysis */
+            }
+        }
+        #chart-container {
+            height: 400px; /* Fixed height for the chart */
+            min-height: 400px;
+        }
     </style>
 </head>
 <body class="p-4 sm:p-8 min-h-screen">
 
-    <div class="max-w-4xl mx-auto space-y-6">
+    <div class="max-w-7xl mx-auto space-y-6">
 
         <!-- Header -->
         <header class="text-center pb-4">
@@ -28,37 +41,84 @@
             <p class="text-slate-400 mt-2">سامانه تحلیلگر هوشمند با یادگیری عمیق و اندیکاتورهای کلاسیک</p>
         </header>
 
-        <!-- Control Panel -->
-        <div class="card flex flex-col sm:flex-row gap-4 sm:gap-6 justify-between items-stretch sm:items-end">
-            <div class="flex-grow space-y-3">
-                <div class="flex flex-col sm:flex-row gap-3">
-                    <label class="block w-full sm:w-1/2">
-                        <span class="text-slate-300 text-sm mb-1 block">نماد (Symbol)</span>
-                        <input type="text" id="symbol-input" value="AAPL" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500" />
-                    </label>
-                    <label class="block w-full sm:w-1/2">
-                        <span class="text-slate-300 text-sm mb-1 block">تایم‌فریم (Timeframe)</span>
-                        <select id="timeframe-select" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="5min">5min</option>
-                            <option value="15min">15min</option>
-                            <option value="30min">30min</option>
-                            <option value="1h" selected>1h</option>
-                            <option value="4h">4h</option>
-                            <option value="1day">1day</option>
-                        </select>
-                    </label>
+        <!-- Main Layout: Chart (Left) and Analysis (Right) -->
+        <div id="main-layout" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Col 1: TradingView Chart -->
+            <div id="chart-panel" class="card p-0 overflow-hidden">
+                <div id="chart-container" class="w-full">
+                    <!-- TradingView Widget will load here -->
                 </div>
             </div>
-            <button id="analyze-button" class="mt-4 sm:mt-0 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200 shadow-lg shadow-blue-500/50">
-                شروع تحلیل
-            </button>
+
+            <!-- Col 2: Control Panel & AI Dashboard -->
+            <div id="analysis-panel" class="space-y-6">
+                <!-- Control Panel -->
+                <div class="card flex flex-col sm:flex-row gap-4 sm:gap-6 justify-between items-stretch sm:items-end">
+                    <div class="flex-grow space-y-3">
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <label class="block w-full sm:w-1/2">
+                                <span class="text-slate-300 text-sm mb-1 block">نماد (Symbol)</span>
+                                <input type="text" id="symbol-input" value="AAPL" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500" />
+                            </label>
+                            <label class="block w-full sm:w-1/2">
+                                <span class="text-slate-300 text-sm mb-1 block">تایم‌فریم (Timeframe)</span>
+                                <select id="timeframe-select" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="5min">5min</option>
+                                    <option value="15min">15min</option>
+                                    <option value="30min">30min</option>
+                                    <option value="1h" selected>1h</option>
+                                    <option value="4h">4h</option>
+                                    <option value="1day">1day</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                    <button id="analyze-button" class="mt-4 sm:mt-0 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200 shadow-lg shadow-blue-500/50">
+                        شروع تحلیل
+                    </button>
+                </div>
+
+                <!-- AI Analysis Card -->
+                <div class="card space-y-4">
+                    <h2 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">گزارش هوش مصنوعی (Ensemble AI)</h2>
+                    
+                    <!-- Meter -->
+                    <div class="text-center pt-2">
+                        <p class="text-slate-400 mb-2">امتیاز سیگنال نهایی (Normalised):</p>
+                        <div class="flex justify-center items-end">
+                            <span id="score-label" class="text-4xl font-extrabold text-blue-400 signal-meter-score">0.00</span>
+                            <span class="text-sm text-slate-500 mr-2" id="ensemble-score-raw">Raw: 0</span>
+                        </div>
+                        
+                        <!-- Meter Bar -->
+                        <div class="meter-container mt-4">
+                            <div id="meter-fill" class="meter-fill w-1/2 bg-slate-500"></div>
+                            <div class="meter-marker"></div>
+                        </div>
+                        <div class="flex justify-between text-xs mt-1 text-slate-400">
+                            <span>قوی‌ترین فروش (-10)</span>
+                            <span>خنثی (0)</span>
+                            <span>قوی‌ترین خرید (+10)</span>
+                        </div>
+                    </div>
+
+                    <!-- AI Message -->
+                    <div class="data-row border-t border-slate-700 pt-4">
+                        <span class="text-slate-300">نتیجه نهایی مدل:</span>
+                        <span id="ai-val" class="font-bold text-lg text-white text-right">در حال انتظار...</span>
+                    </div>
+                </div>
+
+            </div>
+
         </div>
 
-        <!-- Real-Time Analysis Card -->
-        <div id="main-dashboard" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Detailed Indicators & ML Details - Below Main Layout -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             <!-- Col 1: Price & Summary -->
-            <div class="card lg:col-span-1 space-y-4">
+            <div class="card space-y-4">
                 <h2 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">خلاصه تحلیل</h2>
                 <div class="data-row">
                     <span class="text-slate-400">نماد/تایم‌فریم:</span>
@@ -82,60 +142,26 @@
                 </div>
             </div>
 
-            <!-- Col 2: AI Report & Meter -->
-            <div class="card lg:col-span-2 space-y-4">
-                <h2 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">گزارش هوش مصنوعی (Ensemble AI)</h2>
-                
-                <!-- Meter -->
-                <div class="text-center pt-2">
-                    <p class="text-slate-400 mb-2">امتیاز سیگنال نهایی (Normalised):</p>
-                    <div class="flex justify-center items-end">
-                        <span id="score-label" class="text-4xl font-extrabold text-blue-400 signal-meter-score">0.00</span>
-                        <span class="text-sm text-slate-500 mr-2" id="ensemble-score-raw">Raw: 0</span>
-                    </div>
-                    
-                    <!-- Meter Bar -->
-                    <div class="meter-container mt-4">
-                        <div id="meter-fill" class="meter-fill w-1/2 bg-slate-500"></div>
-                        <div class="meter-marker"></div>
-                    </div>
-                    <div class="flex justify-between text-xs mt-1 text-slate-400">
-                        <span>قوی‌ترین فروش (-10)</span>
-                        <span>خنثی (0)</span>
-                        <span>قوی‌ترین خرید (+10)</span>
-                    </div>
-                </div>
-
-                <!-- AI Message -->
-                <div class="data-row border-t border-slate-700 pt-4">
-                    <span class="text-slate-300">نتیجه نهایی مدل:</span>
-                    <span id="ai-val" class="font-bold text-lg text-white text-right">در حال انتظار...</span>
+            <!-- Col 2: Classic Indicators -->
+            <div class="card space-y-4">
+                <h3 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">اندیکاتورهای کلاسیک</h3>
+                <div class="data-row"><span class="text-slate-400">سوپر ترند (Super Trend):</span> <span id="st-val" class="font-mono text-white">---</span></div>
+                <div class="data-row"><span class="text-slate-400">ای‌دی‌ایکس (ADX):</span> <span id="adx-val" class="font-mono text-white">---</span></div>
+                <div class="data-row"><span class="text-slate-400">آر‌اس‌آی (RSI):</span> <span id="rsi-val" class="font-mono text-white">---</span></div>
+                <div class="data-row"><span class="text-slate-400">کانال دانچین (Regime):</span> <span id="regime-val" class="font-mono text-white">---</span></div>
+            </div>
+            
+            <!-- Col 3: ML Individual Results -->
+            <div class="card space-y-4">
+                <h3 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">نتایج انفرادی مدل‌ها</h3>
+                <div id="ml-individual-results" class="space-y-3">
+                    <div class="ml-detail-row"><span class="text-slate-400">RSI_Signal</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                    <div class="ml-detail-row"><span class="text-slate-400">MACD_Cross</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                    <div class="ml-detail-row"><span class="text-slate-400">SuperTrend_Touch</span><span class="font-mono text-slate-400">--% (0)</span></div>
                 </div>
             </div>
-
-            <!-- Col 3: Detailed Indicators & ML Details -->
-            <div class="card lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Classic Indicators -->
-                <div class="space-y-4">
-                    <h3 class="text-lg font-semibold text-blue-400 border-b border-slate-700 pb-2">اندیکاتورهای کلاسیک</h3>
-                    <div class="data-row"><span class="text-slate-400">سوپر ترند (Super Trend):</span> <span id="st-val" class="font-mono text-white">---</span></div>
-                    <div class="data-row"><span class="text-slate-400">ای‌دی‌ایکس (ADX):</span> <span id="adx-val" class="font-mono text-white">---</span></div>
-                    <div class="data-row"><span class="text-slate-400">آر‌اس‌آی (RSI):</span> <span id="rsi-val" class="font-mono text-white">---</span></div>
-                    <div class="data-row"><span class="text-slate-400">کانال دانچین (Regime):</span> <span id="regime-val" class="font-mono text-white">---</span></div>
-                </div>
-                
-                <!-- ML Individual Results -->
-                <div class="space-y-4">
-                    <h3 class="text-lg font-semibold text-blue-400 border-b border-slate-700 pb-2">نتایج انفرادی مدل‌ها</h3>
-                    <div id="ml-individual-results" class="space-y-3">
-                        <div class="ml-detail-row"><span class="text-slate-400">RSI_Signal</span><span class="font-mono text-slate-400">--% (0)</span></div>
-                        <div class="ml-detail-row"><span class="text-slate-400">MACD_Cross</span><span class="font-mono text-slate-400">--% (0)</span></div>
-                        <div class="ml-detail-row"><span class="text-slate-400">SuperTrend_Touch</span><span class="font-mono text-slate-400">--% (0)</span></div>
-                    </div>
-                </div>
-            </div>
-
         </div>
+
 
         <!-- Status & Error Message -->
         <div id="status-message" class="text-center mt-6 text-sm text-slate-500">
@@ -149,6 +175,7 @@
             const symbolInput = document.getElementById('symbol-input');
             const timeframeSelect = document.getElementById('timeframe-select');
             const statusMessage = document.getElementById('status-message');
+            const chartContainer = document.getElementById('chart-container');
 
             // ------------------------------------------------------------------
             // State and Utility Functions
@@ -171,6 +198,7 @@
                             if (response.status === 429 && i < maxRetries - 1) {
                                 throw new Error('Rate limit exceeded. Retrying...');
                             }
+                            // The server now sends error messages in JSON body on 500 status
                             const errorData = await response.json().catch(() => ({}));
                             throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
                         }
@@ -187,6 +215,38 @@
             }
 
             // ------------------------------------------------------------------
+            // TradingView Widget Initialization
+            // ------------------------------------------------------------------
+            function loadTradingViewChart(symbol, interval) {
+                if (window.TradingView) {
+                    chartContainer.innerHTML = ''; // Clear previous widget
+                    new window.TradingView.widget({
+                        "container_id": "chart-container",
+                        "autosize": true,
+                        "symbol": symbol,
+                        "interval": interval === '1day' ? 'D' : (interval === '1week' ? 'W' : (interval === '1month' ? 'M' : interval)),
+                        "timezone": "Etc/UTC",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "en",
+                        "toolbar_bg": "#f1f3f6",
+                        "enable_publishing": false,
+                        "allow_symbol_change": true,
+                        "calendar": false,
+                        "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies", "SuperTrend@tv-basicstudies"],
+                        "withdateranges": true,
+                        "show_popup_button": true,
+                        "popup_width": "1000",
+                        "popup_height": "650",
+                        "hide_side_toolbar": false,
+                        "details": false,
+                        "hotlist": false,
+                        "news": false
+                    });
+                }
+            }
+
+            // ------------------------------------------------------------------
             // Dashboard Update Logic (Error-Proofing Implemented Here)
             // ------------------------------------------------------------------
             function updateDashboard(data) {
@@ -194,7 +254,8 @@
                 const indicators = data.indicators || {};
                 const symbol = data.symbol || 'N/A';
                 const timeframe = data.timeframe || 'N/A';
-                const price = data.price !== undefined ? data.price.toLocaleString() : '---';
+                // Price safe access and formatting
+                const price = data.price !== undefined ? parseFloat(data.price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4}) : '---';
 
                 // Update general stats
                 document.getElementById("symbol-tf-val").innerText = `${symbol} / ${timeframe}`;
@@ -206,12 +267,11 @@
                 document.getElementById("regime-val").innerText = indicators.regime || "N/A";
                 document.getElementById("div-val").innerText = indicators.divergence || "N/A";
 
-                // HTF Status Safe Access
+                // HTF Status Safe Access and Styling
                 const htfEl = document.getElementById("htf-val");
                 const htfStatus = indicators.htf_status || "N/A";
                 const htfTrend = indicators.htf_trend || "N/A";
-                htfEl.innerText = htfStatus;
-                // Apply color based on trend, safely falling back to gray
+                htfEl.innerText = `${htfTrend} (${htfStatus})`;
                 let htfColorClass = 'text-slate-400';
                 if (htfTrend.includes("Bullish")) {
                     htfColorClass = 'text-green-400';
@@ -258,12 +318,16 @@
                 indContainer.innerHTML = '';
                 const indivResults = aiReport.individual_results || {};
                 
-                for (const [key, value] of Object.entries(indivResults)) {
-                    // Safe access to nested values
-                    const score = value.score !== undefined ? value.score : 0;
-                    const prob = value.prob !== undefined ? value.prob : '--';
-                    const color = score > 0 ? 'text-green-400' : (score < 0 ? 'text-red-400' : 'text-slate-400');
-                    indContainer.innerHTML += `<div class=\"ml-detail-row\"><span class=\"text-slate-400\">${key}</span><span class=\"font-mono ${color}\">${prob}% (${score})</span></div>`;
+                if (Object.keys(indivResults).length === 0) {
+                    indContainer.innerHTML = `<div class="text-slate-500">تحلیل انفرادی موجود نیست.</div>`;
+                } else {
+                    for (const [key, value] of Object.entries(indivResults)) {
+                        // Safe access to nested values
+                        const score = value.score !== undefined ? value.score : 0;
+                        const prob = value.prob !== undefined ? value.prob : '--';
+                        const color = score > 0 ? 'text-green-400' : (score < 0 ? 'text-red-400' : 'text-slate-400');
+                        indContainer.innerHTML += `<div class=\"ml-detail-row\"><span class=\"text-slate-400\">${key}</span><span class=\"font-mono ${color}\">${prob}% (${score})</span></div>`;
+                    }
                 }
             }
 
@@ -278,7 +342,7 @@
                             el.innerHTML = '<div class="' + skeletonClass + '"></div>';
                             el.classList.add('flex', 'justify-end'); // Center skeleton for text fields
                         } else {
-                            // Clear skeleton classes
+                            // Clear skeleton classes and restore original structure if needed
                             el.classList.remove('flex', 'justify-end');
                         }
                     }
@@ -296,7 +360,6 @@
             // ------------------------------------------------------------------
             async function runAnalysis() {
                 if (currentRequest) {
-                    // Cancel previous request if needed (not easily doable with Fetch/Python, but prevents multiple clicks)
                     return;
                 }
 
@@ -308,6 +371,10 @@
                     return;
                 }
 
+                // 1. Update Chart
+                loadTradingViewChart(symbol, timeframe);
+
+                // 2. Run Analysis
                 applySkeleton(true);
                 analyzeButton.disabled = true;
                 analyzeButton.innerText = "در حال تحلیل...";
@@ -326,7 +393,8 @@
                     const data = await response.json();
 
                     if (data.error) {
-                        setStatus(`❌ خطای سرور: ${data.error}`, true);
+                        // Display the detailed server error message
+                        setStatus(`❌ خطای تحلیل: ${data.error}`, true);
                         applySkeleton(false);
                     } else {
                         updateDashboard(data);
@@ -335,7 +403,7 @@
                     }
 
                 } catch (error) {
-                    setStatus(`❌ خطای شبکه یا دریافت داده: ${error.message}`, true);
+                    setStatus(`❌ خطای شبکه یا سرور (500): ${error.message}`, true);
                     applySkeleton(false);
                 } finally {
                     currentRequest = null;
@@ -351,9 +419,10 @@
             symbolInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') runAnalysis();
             });
+            timeframeSelect.addEventListener('change', runAnalysis); // Re-run analysis on TF change
 
-            // Run analysis on initial load
-            // runAnalysis(); // Commented out to wait for user interaction
+            // Run initial analysis on load with default values
+            runAnalysis();
         });
     </script>
 </body>
