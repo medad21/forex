@@ -21,7 +21,7 @@ app = Flask(__name__)
 # کلیدهای API: این کلیدها ابتدا از متغیرهای محیطی خوانده می‌شوند، 
 # اگر متغیر محیطی تنظیم نشده باشد، از مقادیر پیش‌فرض استفاده می‌شود.
 # توجه: در یک محیط واقعی، باید از کلیدهای معتبر استفاده کنید.
-API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c") 
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "c15e9b87795a49aebc5b246e156b68bb") 
 API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
 
 # پارامترهای تحلیل و ML
@@ -416,3 +416,4 @@ if __name__ == '__main__':
     # این خط را در محیطی که از متغیر محیطی برای پورت استفاده می‌شود، حفظ کنید
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
