@@ -18,6 +18,7 @@ warnings.filterwarnings('ignore')
 app = Flask(__name__)
 
 # کلیدها (استفاده از os.environ.get برای امنیت و پایداری)
+# ⚠️ لطفا کلیدهای واقعی خود را در محیط Railway/Hosting تنظیم کنید.
 API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
 API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
 
@@ -61,6 +62,7 @@ def ensure_models_loaded():
         tf = imported_tf
         
         # بارگذاری مدل‌های Joblib
+        # ⚠️ اطمینان حاصل کنید که فایل‌های مدل در پوشه 'models/' موجود باشند.
         rf_model = joblib.load('models/rf_model.pkl')
         xgb_model = joblib.load('models/xgb_model.pkl')
         lr_model = joblib.load('models/meta_model.pkl') # Meta Model
@@ -89,6 +91,7 @@ def cleanup_memory():
 # ---------------------------------------------------------
 
 def convert_to_serializable(obj):
+    """تبدیل انواع NumPy به انواع استاندارد پایتون برای JSON."""
     if isinstance(obj, np.float32) or isinstance(obj, np.float64):
         return float(obj)
     if isinstance(obj, np.int32) or isinstance(obj, np.int64):
@@ -100,7 +103,7 @@ def convert_to_serializable(obj):
     return obj
 
 def get_candles(symbol, interval, size=2000):
-    # استفاده از yfinance برای پایداری و عدم وابستگی به APIهای مختلف
+    """دریافت داده‌های کندل با استفاده از YFinance."""
     try:
         import yfinance as yf
         ticker = yf.Ticker(symbol)
@@ -108,6 +111,7 @@ def get_candles(symbol, interval, size=2000):
         map_interval = {'1h': '1h', '4h': '4h', '1d': '1d'}
         yf_interval = map_interval.get(interval, '1d')
         
+        # تعیین دوره (Period) بر اساس اینتروال برای دریافت داده کافی
         if yf_interval == '1d':
             period = 'max' 
         elif yf_interval == '4h':
@@ -130,6 +134,7 @@ def get_candles(symbol, interval, size=2000):
         return None
 
 def process_data(df):
+    """محاسبه اندیکاتورها و مهندسی ویژگی‌ها."""
     if df is None or df.empty:
         return pd.DataFrame()
     try:
@@ -143,7 +148,7 @@ def process_data(df):
         if len(df) < 60:
             return pd.DataFrame()
 
-        # اندیکاتورها
+        # اندیکاتورهای اصلی
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.ema(length=100, append=True)
@@ -255,27 +260,30 @@ def get_ml_prediction(df):
     return 0, report
 
 def get_sentiment(df):
+    """تحلیل احساسات (Placeholder)."""
     if df.empty: return 0
-    # ... منطق تحلیل احساسات
     return 0
 
 def check_divergence(df):
+    """بررسی واگرایی (Placeholder)."""
     if df.empty: return False, 0
-    # ... منطق واگرایی
     return False, 0 
 
 def calculate_position_size(close, atr_value):
+    """محاسبه حجم پوزیشن و SL/TP."""
     if atr_value <= 0:
         return 0, 0, 0
 
     risk_per_trade = 0.01 
     account_size = 1000 
     
-    stop_loss_pips_value = atr_value * RISK_REWARD_ATR 
+    stop_loss_pips_value = atr_value * 1.5 # استفاده از یک ضرب‌کننده معقول برای SL
     risk_amount = account_size * risk_per_trade
     
-    # محاسبه Lot Size و SL/TP خام (برای BUY)
+    # محاسبه Lot Size
     lot_size = round(risk_amount / stop_loss_pips_value / 100000, 2)
+    
+    # محاسبه SL و TP (خام، برای جهت خرید)
     sl = round(close - stop_loss_pips_value, 5)
     tp = round(close + stop_loss_pips_value * RISK_REWARD_ATR, 5)
 
@@ -295,15 +303,15 @@ def analyze_route():
     symbol = request.args.get("symbol", "AAPL")
     interval = request.args.get("interval", "1h")
     
-    # تنظیم مقادیر اولیه برای جلوگیری از خطای "Undefined" در فرانت‌اند
+    # 💥 تنظیم مقادیر اولیه برای تضمین عدم وجود undefined در JSON
     response = {
         "symbol": symbol, 
         "interval": interval, 
         "status": "Failed", 
         "signal": "N/A",
-        "stop_loss": 0,    # 💥 فیلدهای ضروری
-        "take_profit": 0,  # 💥 فیلدهای ضروری
-        "lot_size": 0      # 💥 فیلدهای ضروری
+        "stop_loss": 0,    # 🔴 تضمین وجود فیلد
+        "take_profit": 0,  # 🔴 تضمین وجود فیلد (حل مشکل 'tp')
+        "lot_size": 0      # 🔴 تضمین وجود فیلد
     }
     
     try:
@@ -337,7 +345,7 @@ def analyze_route():
         elif total_score <= -SIGNAL_SCORE_THRESHOLD:
             signal = "SELL"
             
-        # 5. محاسبه سایز پوزیشن و SL/TP (اصلاح برای جلوگیری از خطای tp)
+        # 5. محاسبه سایز پوزیشن و SL/TP
         sl = 0
         tp = 0
         lot_size = 0
@@ -366,7 +374,7 @@ def analyze_route():
         response["current_price"] = last_close
         response["ATR"] = last_atr
         
-        # 💥 جایگزینی مقادیر 0 با مقادیر محاسبه شده یا باقی ماندن 0
+        # 💥 جایگزینی مقادیر 0 با مقادیر محاسبه شده (اگر سیگنال BUY/SELL بود)
         response["stop_loss"] = sl
         response["take_profit"] = tp
         response["lot_size"] = lot_size
@@ -385,7 +393,8 @@ def analyze_route():
         traceback.print_exc()
         cleanup_memory() 
         response["message"] = f"Server Error: {str(e)}"
-        return jsonify(response), 500
+        # تضمین بازگشت پاسخ JSON حتی در صورت خطا
+        return jsonify(convert_to_serializable(response)), 500
 
 @app.route("/backtest", methods=["GET"])
 def backtest_route():
@@ -398,10 +407,11 @@ def optimize_route():
     return jsonify({"message": "Optimize endpoint. Not fully implemented."})
 
 # ---------------------------------------------------------
-# entrypoint (رفع خطای SyntaxError)
+# entrypoint 
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
     # اطمینان از تنظیم port و debug=False برای محیط سرور
     port = int(os.environ.get("PORT", 8080))
+    # ⚠️ حتما debug=False باشد تا حافظه مصرف نشود.
     app.run(host="0.0.0.0", port=port, debug=False)
