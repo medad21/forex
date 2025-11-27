@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Trader AI 7.5 (Ultimate)</title>
+    <title>Pro Trader AI 7.6 (Ultimate)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>
@@ -266,10 +266,14 @@
 
         // Data
         document.getElementById("price-val").innerText = data.price;
-        document.getElementById("tp-val").innerText = data.setup.tp || "-";
-        document.getElementById("sl-val").innerText = data.setup.sl || "-";
-        document.getElementById("lot-val").innerText = data.setup.lot_size || "0";
-        document.getElementById("risk-val").innerText = `ریسک دلاری: $${data.setup.risk_amt}`;
+        
+        // 💥 اصلاح آدرس‌دهی برای رفع خطای 'tp' و 'sl'
+        // آدرس صحیح: data.setup.tp و data.setup.sl (با استفاده از Optional Chaining)
+        document.getElementById("tp-val").innerText = data.setup?.tp || "-";
+        document.getElementById("sl-val").innerText = data.setup?.sl || "-";
+        document.getElementById("lot-val").innerText = data.setup?.lot_size || "0";
+        document.getElementById("risk-val").innerText = `ریسک دلاری: $${data.setup?.risk_amt || 0}`;
+        
         document.getElementById("sr-val").innerText = data.indicators.sr_levels;
         document.getElementById("news-val").innerText = data.indicators.news;
         
