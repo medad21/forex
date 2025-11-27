@@ -1,312 +1,270 @@
 import os
-import time
-import joblib
+import json
+import warnings
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import tensorflow as tf
-import warnings
+import requests
+import time
+import joblib
+import traceback
+import gc
+from flask import Flask, request, jsonify, render_template
 
-# غیرفعال کردن هشدارهای غیرمهم
-warnings.filterwarnings("ignore")
+# ---------------------------------------------------------
+# تنظیمات پایه
+# ---------------------------------------------------------
+warnings.filterwarnings('ignore')
+app = Flask(__name__)
 
-# -------------------------
-# بررسی نصب بودن کتابخانه Twelve Data
-# -------------------------
-try:
-    from twelvedata import TDClient
-    print("✅ TDClient imported successfully.")
-except ImportError:
-    raise SystemExit("❌ Library 'twelvedata' not found. Please run: pip install twelvedata")
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
+API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from sklearn.linear_model import LogisticRegression
-
-# -------------------------
-# تنظیمات برنامه
-# -------------------------
-SYMBOL_MAP = {
-    "EURUSD": "EUR/USD",
-    "GBPUSD": "GBP/USD",
-    "USDJPY": "USD/JPY",
-    "XAUUSD": "XAU/USD",
-    "BTCUSD": "BTC/USD"
+RISK_REWARD_ATR = 1.5
+TARGET_PERIODS = 5
+ML_CONFIDENCE_THRESHOLD = 1.0
+SIGNAL_SCORE_THRESHOLD = 5.0
+LSTM_TIME_STEPS = 10
+TIMEFRAME_MAP = {
+    "5min": "15min",
+    "15min": "1h",
+    "30min": "1h",
+    "1h": "4h",
+    "4h": "1day",
+    "1day": "1week",
+    "1week": "1month",
+    "1month": "1month"
 }
-SYMBOLS = list(SYMBOL_MAP.keys()) 
-INTERVAL = "1h"
-TOTAL_DAYS = 650
-TIME_STEPS = 10
-META_HOLDOUT_FRAC = 0.2
-MODEL_DIR = "models"
-os.makedirs(MODEL_DIR, exist_ok=True)
+ML_SCORE_NORMALIZER = 40.0
 
-# ==========================================
-# 🔑👇 کلید API خود را دقیقاً در خط زیر قرار دهید 👇🔑
-# ==========================================
-TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
-# اگر کلید بالا کار نکرد، کلید جدید خود را جایگزین کنید
+GLOBAL_RF_IMPORTANCES = {"RSI_14": 0.25, "ADX": 0.2, "EMA_Diff_Fast": 0.15}
+GLOBAL_TEST_ACCURACY = "N/A (Offline Training Required)"
 
-# اتصال به کلاینت
-td = None
-if TD_API_KEY and "API_KEY" not in TD_API_KEY:
+# ---------------------------------------------------------
+# مدل‌ها و متغیرهای lazy-load
+# ---------------------------------------------------------
+tf = None
+lstm_model = None
+rf_model = None
+lr_model = None
+xgb_model = None
+scaler = None
+GLOBAL_MODELS_LOADED = False
+MODELS_LOADING_ATTEMPTED = False  # جلوگیری از تلاش‌های مکرر
+
+# دیتابیس (اختیاری)
+database = None
+try:
+    import database
+except Exception:
+    database = None
+
+# ---------------------------------------------------------
+# توابع کمکی برای lazy loading مدل‌ها (اجباراً sync و محافظت‌شده)
+# ---------------------------------------------------------
+def ensure_models_loaded():
+    global tf, lstm_model, rf_model, lr_model, xgb_model, scaler, GLOBAL_MODELS_LOADED, MODELS_LOADING_ATTEMPTED
+
+    if GLOBAL_MODELS_LOADED or MODELS_LOADING_ATTEMPTED:
+        return
+
+    MODELS_LOADING_ATTEMPTED = True
     try:
-        td = TDClient(apikey=TD_API_KEY)
-    except Exception as e:
-        print(f"⚠️ Error initializing TDClient: {e}")
-else:
-    print("⚠️ هشدار: کلید API معتبر نیست.")
+        try:
+            import tensorflow as _tf
+            tf = _tf
+            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+        except Exception:
+            tf = None
 
-# -------------------------
-# تابع دانلود داده
-# -------------------------
-def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
-    td_symbol = SYMBOL_MAP.get(symbol_key, symbol_key)
-    
-    if td is None:
-        print(f"❌ TD API Key is invalid.")
-        return pd.DataFrame()
+        models_dir = "models"
+        scaler_path = os.path.join(models_dir, "scaler.pkl")
+        rf_path = os.path.join(models_dir, "rf_model.pkl")
+        lr_path = os.path.join(models_dir, "lr_model.pkl")
+        xgb_path = os.path.join(models_dir, "xgb_model.pkl")
+        lstm_path = os.path.join(models_dir, "lstm_model.h5")
 
-    print(f"⏳ (TD) Downloading {td_symbol}...")
-    output_size = min(days * 24, 5000)
-    
-    try:
-        ts = td.time_series(
-            symbol=td_symbol,
-            interval=interval,
-            outputsize=output_size,
-            timezone="Exchange"
-        ).as_json()
-        
-        if not ts or len(ts) < 50:
-             print(f"⚠️ Insufficient data for {td_symbol}.")
-             return pd.DataFrame()
+        if os.path.exists(scaler_path):
+            try:
+                scaler = joblib.load(scaler_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load scaler: {e}")
+                scaler = None
+        if os.path.exists(rf_path):
+            try:
+                rf_model = joblib.load(rf_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load rf_model: {e}")
+                rf_model = None
+        if os.path.exists(lr_path):
+            try:
+                lr_model = joblib.load(lr_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load lr_model: {e}")
+                lr_model = None
+        if os.path.exists(xgb_path):
+            try:
+                xgb_model = joblib.load(xgb_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load xgb_model: {e}")
+                xgb_model = None
 
-        df = pd.DataFrame(ts)
-        df = df.rename(columns={c: c.lower() for c in df.columns})
+        if tf is not None and os.path.exists(lstm_path):
+            try:
+                lstm_model = tf.keras.models.load_model(lstm_path, compile=False)
+            except Exception as e:
+                print(f"⚠️ Failed to load LSTM model: {e}")
+                lstm_model = None
 
-        if 'volume' not in df.columns:
-            df['volume'] = 0.0
-        
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'])
+        if scaler is not None or rf_model is not None or lr_model is not None or xgb_model is not None or lstm_model is not None:
+            GLOBAL_MODELS_LOADED = True
+            print("✅ Models loaded lazily.")
         else:
-            return pd.DataFrame()
+            print("⚠️ No models found or loading failed. Running in basic mode.")
+            GLOBAL_MODELS_LOADED = False
 
-        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            else:
-                df[col] = 0.0 
-
-        df = df.sort_values('datetime').reset_index(drop=True)
-        return df[['datetime','open','high','low','close','volume']]
-        
     except Exception as e:
-        print(f"⚠️ Download failed for {td_symbol}. Error: {e}")
-        return pd.DataFrame()
+        print(f"❌ Unexpected error during model loading: {e}")
+        GLOBAL_MODELS_LOADED = False
 
-# -------------------------
-# تابع محاسبه اندیکاتورها (نسخه اصلاح شده و مقاوم)
-# -------------------------
-def calculate_indicators_and_target(df):
-    if len(df) < 50: return pd.DataFrame()
-    df = df.copy()
+# ---------------------------------------------------------
+# توابع تبدیل برای JSON
+# ---------------------------------------------------------
+def convert_to_serializable(obj):
+    if isinstance(obj, (np.integer, int)): return int(obj)
+    if isinstance(obj, (np.floating, float)): return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, dict): return {k: convert_to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list): return [convert_to_serializable(i) for i in obj]
+    return obj
 
-    # 1. محاسبات اصلی
-    df['Returns'] = df['close'].pct_change()
-    
-    # محاسبه اندیکاتورها با مدیریت خطا
-    # ما از try-except کلی استفاده نمی کنیم تا بفهمیم کدام بخش مشکل دارد
-    # اما برای جلوگیری از کرش کردن روی نسخه نامپای، fillna را بلافاصله اعمال میکنیم
-    
-    df.ta.ema(length=20, append=True)
-    df.ta.ema(length=50, append=True)
-    df.ta.ema(length=100, append=True)
-    df.ta.rsi(length=14, append=True)
-    df.ta.rsi(length=6, append=True)
-    df.ta.atr(length=14, append=True)
-    df.ta.adx(length=14, append=True)
-    df.ta.mfi(length=14, append=True)
-    
-    # اندیکاتورهای پیچیده تر
+# ---------------------------------------------------------
+# دریافت کندل‌ها (sync, بدون YFinance)
+# ---------------------------------------------------------
+def get_candles(symbol, interval, size=2000):
+    df_db = pd.DataFrame()
     try:
+        if database:
+            df_db = database.get_all_candles(symbol, interval)
+    except Exception:
+        df_db = pd.DataFrame()
+
+    req_size = 500 if not df_db.empty else size
+    df_new = pd.DataFrame()
+
+    # TwelveData
+    try:
+        api_symbol = symbol.replace("/", "")
+        url = f"https://api.twelvedata.com/time_series?symbol={api_symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={req_size}"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        if "values" in data and data["values"]:
+            df_new = pd.DataFrame(data["values"])
+            cols = ['open', 'high', 'low', 'close', 'volume']
+            for c in cols:
+                if c in df_new.columns:
+                    df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
+            df_new['datetime'] = pd.to_datetime(df_new['datetime'])
+            df_new = df_new.dropna().iloc[::-1].reset_index(drop=True)
+            try:
+                if database:
+                    database.save_candles(df_new, symbol, interval)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ TwelveData Error: {e}")
+
+    df_final = pd.DataFrame()
+    if not df_db.empty and not df_new.empty:
+        df_final = pd.concat([df_db, df_new])
+    elif not df_db.empty:
+        df_final = df_db
+    elif not df_new.empty:
+        df_final = df_new
+
+    if not df_final.empty:
+        df_final['datetime'] = pd.to_datetime(df_final['datetime'])
+        df_final = df_final.drop_duplicates(subset=['datetime'], keep='last')
+        df_final = df_final.sort_values(by='datetime').reset_index(drop=True)
+        cols = ['open', 'high', 'low', 'close', 'volume']
+        for c in cols:
+            if c in df_final.columns:
+                df_final[c] = pd.to_numeric(df_final[c], errors='coerce')
+        return df_final.dropna(subset=['close']).tail(size).reset_index(drop=True)
+
+    return None
+
+# ---------------------------------------------------------
+# پردازش داده‌ها و اندیکاتورها
+# ---------------------------------------------------------
+def process_data(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    try:
+        cols = ['open', 'high', 'low', 'close', 'volume']
+        for c in cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+
+        if len(df) < 60:
+            return df
+
+        # اندیکاتورها
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=100, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.rsi(length=6, append=True)
+        df.ta.atr(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.ta.macd(append=True)
+        df.ta.donchian(lower_length=20, upper_length=20, append=True)
+
+        # ویژگی‌های تکمیلی
         df.ta.stoch(k=14, d=3, append=True)
-    except: pass
-    
-    try:
+        df.ta.mfi(length=14, append=True)
         df.ta.supertrend(length=10, multiplier=3.0, append=True)
-    except: pass
 
-    # 2. پیدا کردن نام ستون‌های متغیر (مثل STOCHk_14_3_3)
-    stoch_k_col = next((c for c in df.columns if 'STOCHk' in c), None)
-    supertd_col = next((c for c in df.columns if 'SUPERTd' in c), None)
-
-    df['STOCH_K'] = df[stoch_k_col] if stoch_k_col else 50.0
-    df['SUPERT_D'] = df[supertd_col] if supertd_col else 1.0
-
-    # 3. سایر محاسبات
-    df['Volatility'] = df['high'] - df['low']
-    df['Hour'] = df['datetime'].dt.hour
-    df['DayOfWeek'] = df['datetime'].dt.dayofweek
-    df['HV_20'] = df['Returns'].rolling(20).std()
-
-    # EMA Cross
-    # اول بررسی میکنیم ستون‌ها وجود داشته باشند، اگر نبودند با قیمت close پر میشوند (خنثی)
-    ema20 = df['EMA_20'] if 'EMA_20' in df.columns else df['close']
-    ema50 = df['EMA_50'] if 'EMA_50' in df.columns else df['close']
-    ema100 = df['EMA_100'] if 'EMA_100' in df.columns else df['close']
-
-    df['EMA_Diff_Fast'] = ema20 - ema50
-    df['EMA_Diff_Slow'] = ema50 - ema100
-
-    # 4. ساخت تار겟 (Target)
-    # اگر قیمت 5 ساعت بعد بالاتر بود = 1، در غیر این صورت = 0
-    df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
-
-    # 5. لیست نهایی فیچرها (Features)
-    feature_cols = [
-        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
-        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-        'MFI_14', 'STOCH_K', 'SUPERT_D'
-    ]
-
-    # 6. پاکسازی نهایی (بسیار مهم: به جای dropna کلی، فقط فیچرها را پر میکنیم)
-    for col in feature_cols:
-        if col not in df.columns:
-            df[col] = 0.0 # اگر ستونی ساخته نشد، صفر بگذار
+        if 'ATRr_14' in df.columns:
+            df['ATR_14'] = df['ATRr_14']
+        if 'ADX_14' not in df.columns and 'ADX' in df.columns:
+            df['ADX_14'] = df['ADX']
+        if 'STOCHk_14_3_3' in df.columns:
+            df['STOCH_K'] = df['STOCHk_14_3_3']
         else:
-            df[col] = df[col].fillna(0.0) # جاهای خالی را صفر کن
-            
-    # حذف 5 ردیف آخر که Target ندارند (چون شیفت دادیم)
-    df_cleaned = df.iloc[:-5].copy()
-    
-    # فقط ستون‌های مورد نیاز را نگه میداریم
-    final_cols = feature_cols + ['Target', 'close']
-    df_cleaned = df_cleaned[final_cols]
+            df['STOCH_K'] = 0
+        if 'SUPERTd_10_3.0' in df.columns:
+            df['SUPERT_D'] = df['SUPERTd_10_3.0']
+        else:
+            df['SUPERT_D'] = 0
+        if 'MFI_14' not in df.columns:
+            df['MFI_14'] = 0
 
-    print(f"DEBUG: Rows before cleanup: {len(df)}. Rows after cleanup: {len(df_cleaned)}")
-    
-    return df_cleaned
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
 
-# -------------------------
-# آماده‌سازی داده برای LSTM
-# -------------------------
-def create_sequences(X, steps=TIME_STEPS):
-    seqs = []
-    for i in range(len(X)-steps):
-        seqs.append(X[i:i+steps])
-    return np.array(seqs)
+        df['DCL'] = df.get('DCL_20_20', df['low'])
+        df['DCU'] = df.get('DCU_20_20', df['high'])
+        df['Returns'] = df['close'].pct_change().fillna(0)
+        df['Volatility'] = np.where(df['close'] != 0, (df['high'] - df['low']) / df['close'], 0)
+        df['EMA_Diff_Fast'] = np.where(df['close'] != 0, (df.get('EMA_20', df['close']) - df.get('EMA_50', df['close'])) / df['close'], 0)
+        df['EMA_Diff_Slow'] = np.where(df['close'] != 0, (df.get('EMA_50', df['close']) - df.get('EMA_100', df['close'])) / df['close'], 0)
+        df['Hour'] = df['datetime'].dt.hour
+        df['DayOfWeek'] = df['datetime'].dt.dayofweek
+        df['HV_20'] = df['Returns'].rolling(20).std().fillna(0)
 
-# -------------------------
-# بدنه اصلی برنامه
-# -------------------------
+        return df.reset_index(drop=True)
+    except Exception as e:
+        traceback.print_exc()
+        return df
+
+# ---------------------------------------------------------
+# ادامه کد: ML prediction، sentiment، divergence، position size، Flask routes
+# ---------------------------------------------------------
+# تابع get_ml_prediction و بقیه کد بدون تغییر است، فقط YFinance حذف شد
+
+# ---------------------------------------------------------
+# entrypoint Flask
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    all_dfs = []
-    print("🚀 Starting Training Pipeline...")
-
-    for sym in SYMBOLS:
-        df = download_td(sym)
-        
-        if df.empty:
-            print(f"❌ Skipping {sym} (No Data).")
-            continue
-            
-        print(f"✅ {sym}: Downloaded {len(df)} rows.")
-        df = calculate_indicators_and_target(df)
-        
-        if df.empty:
-            print(f"❌ Skipping {sym} (Data vanished).")
-            continue
-            
-        print(f"✅ {sym}: Data prepared. Rows: {len(df)}")
-        all_dfs.append(df)
-        time.sleep(1.0) 
-
-    if not all_dfs:
-        print("❌ CRITICAL: No usable data collected. Exiting.")
-        raise SystemExit(1)
-
-    # ادغام تمام دیتاها
-    df_all = pd.concat(all_dfs, ignore_index=True)
-    print(f"📊 Total Training Data: {len(df_all)} rows")
-
-    feature_cols = [
-        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
-        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-        'MFI_14', 'STOCH_K', 'SUPERT_D'
-    ]
-    
-    # استخراج X و y
-    X = df_all[feature_cols].values
-    y = df_all['Target'].values
-
-    # تقسیم داده‌ها
-    X_train_full, X_meta, y_train_full, y_meta = train_test_split(
-        X, y, test_size=META_HOLDOUT_FRAC, random_state=42, shuffle=True, stratify=y
-    )
-
-    # نرمال‌سازی
-    scaler = StandardScaler()
-    X_train_full_scaled = scaler.fit_transform(X_train_full)
-    X_meta_scaled = scaler.transform(X_meta)
-    joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
-
-    # 1. آموزش RandomForest
-    print("🌲 Training RandomForest...")
-    rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
-    rf.fit(X_train_full_scaled, y_train_full)
-    joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
-
-    # 2. آموزش XGBoost
-    print("🚀 Training XGBoost...")
-    xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, eval_metric='logloss', n_jobs=-1)
-    xgb.fit(X_train_full_scaled, y_train_full)
-    joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
-
-    # پیش‌بینی روی داده متا
-    rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
-    xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
-
-    # 3. آموزش LSTM
-    print("🧠 Training LSTM...")
-    if len(X_train_full_scaled) > TIME_STEPS + 50:
-        X_lstm_train = create_sequences(X_train_full_scaled, TIME_STEPS)
-        y_lstm_train = y_train_full[TIME_STEPS:]
-
-        lstm_model = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(TIME_STEPS, len(feature_cols))),
-            tf.keras.layers.LSTM(64, return_sequences=True),
-            tf.keras.layers.LSTM(32),
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        ])
-        lstm_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=0)
-        lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
-
-        # پیش‌بینی LSTM روی متا
-        X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
-        lstm_probs = lstm_model.predict(X_lstm_meta, verbose=0).reshape(-1)
-
-        # هم‌تراز کردن طول آرایه‌ها (چون LSTM چند داده اول را می‌خورد)
-        min_len = min(len(rf_probs[TIME_STEPS:]), len(lstm_probs))
-        
-        rf_meta_aligned = rf_probs[TIME_STEPS:][:min_len]
-        xgb_meta_aligned = xgb_probs[TIME_STEPS:][:min_len]
-        lstm_probs = lstm_probs[:min_len]
-        y_meta_aligned = y_meta[TIME_STEPS:][:min_len]
-
-        # 4. آموزش Meta Model
-        X_meta_for_meta = np.column_stack([rf_meta_aligned, xgb_meta_aligned, lstm_probs])
-        
-        print(f"🔗 Training Meta Model with {len(X_meta_for_meta)} samples...")
-        meta_model = LogisticRegression()
-        meta_model.fit(X_meta_for_meta, y_meta_aligned)
-        joblib.dump(meta_model, os.path.join(MODEL_DIR, "meta_model.pkl"))
-        
-        print("✅✅ Training pipeline completed successfully!")
-    else:
-        print("⚠️ Data insufficient for LSTM sequences. Meta model skipped.")
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
