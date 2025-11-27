@@ -12,312 +12,560 @@
         .meter-container { width: 100%; height: 12px; background: #334155; border-radius: 6px; position: relative; overflow: hidden; }
         .meter-fill { height: 100%; position: absolute; transition: all 0.8s; }
         .meter-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; opacity: 0.5; }
-        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; }
-        .v-grid { display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; padding: 1rem; }
-        @media (max-width: 1024px) { .v-grid { grid-template-columns: 1fr; } #chart-container { height: 500px; } }
-        .skeleton { animation: pulse 1.5s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
-        @keyframes pulse { 50% { opacity: .5; } }
-        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; }
-        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 4px 0; }
-        .lot-box {
-            background: linear-gradient(45deg, #1e293b, #334155);
-            border: 1px solid #facc15;
-            box-shadow: 0 0 10px rgba(250, 204, 21, 0.1);
+        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1); }
+        .indicator-row { display: flex; justify-content: space-between; align-items: center; padding: 0.25rem 0; border-bottom: 1px dashed #334155; }
+        .indicator-row:last-child { border-bottom: none; }
+        .label { color: #94a3b8; font-size: 0.875rem; }
+        .value { font-weight: 500; font-size: 0.9rem; }
+        
+        /* ML Specific Styles */
+        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 0.1rem 0; }
+        .ml-card-title { font-size: 1.125rem; font-weight: 700; color: #cbd5e1; border-bottom: 2px solid #334155; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+        
+        /* Skeleton Loading */
+        .skeleton { background-color: #334155; animation: pulse 1.5s infinite; border-radius: 4px; }
+        .skeleton.text-line { height: 1rem; margin-bottom: 0.25rem; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Live Mode Toggle */
+        .toggle-checkbox {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-label {
+            display: block;
+            cursor: pointer;
+            width: 40px;
+            height: 20px;
+            background-color: #475569;
+            border-radius: 9999px;
+            position: relative;
+            transition: background-color 0.2s;
+        }
+        .toggle-label:after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 16px;
+            height: 16px;
+            background-color: #f1f5f9;
+            border-radius: 9999px;
+            transition: right 0.2s, background-color 0.2s;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #34d399;
+        }
+        .toggle-checkbox:checked + .toggle-label:after {
+            right: calc(100% - 18px); /* Move 22px to the left (40px width - 18px knob width) */
+            background-color: #ffffff;
         }
     </style>
 </head>
-<body>
+<body class="p-4 md:p-8 min-h-screen">
 
-<div class="v-grid min-h-screen">
-    <div class="card p-4 h-fit flex flex-col gap-3">
-        <div class="flex justify-between items-center border-b border-slate-700 pb-3">
-            <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
-                💎 Pro Trader 7.5
-            </h2>
-            <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
-        </div>
-
-        <div class="grid grid-cols-3 gap-2">
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">نماد</label>
-                <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                    <option value="EUR/USD">EUR/USD</option>
-                    <option value="GBP/USD">GBP/USD</option>
-                    <option value="USD/JPY">USD/JPY</option>
-                    <option value="XAU/USD">XAU/USD</option>
-                    <option value="BTC/USD">BTC/USD</option>
-                </select>
-            </div>
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
-                <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
-                    <option value="5min">5 Min</option>
-                    <option value="15min">15 Min</option>
-                    <option value="30min">30 Min</option>
-                    <option value="1h" selected>1 Hour</option>
-                    <option value="4h">4 Hour</option>
-                    <option value="1day">1 Day</option>
-                    <option value="1week">1 Week</option>
-                    <option value="1month">1 Month</option>
-                </select>
-            </div>
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">کندل‌ها</label>
-                <input type="number" id="candle-size" value="1000" min="100" max="2500" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center">
-            </div>
-        </div>
-
-        <div class="grid grid-cols-3 gap-2 border-t border-slate-700 pt-2">
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">سرمایه ($)</label>
-                <input type="number" id="balance" value="1000" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-green-400">
-            </div>
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">ریسک (%)</label>
-                <input type="number" id="risk" value="1.0" step="0.1" max="100" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-red-400">
-            </div>
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">R:R</label>
-                <input type="number" id="rr-ratio" value="1.5" step="0.1" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-yellow-400">
-            </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2 mt-1">
-            <div>
-                <label class="text-[10px] text-slate-400 block mb-1">نوع استاپ لاس</label>
-                <select id="sl-type" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-purple-300">
-                    <option value="static">استاتیک (کانال)</option>
-                    <option value="dynamic">داینامیک (ترند)</option>
-                </select>
-            </div>
-            <div class="flex flex-col justify-end">
-                <div class="bg-slate-800 p-2 rounded flex justify-between items-center border border-slate-700 h-[38px]">
-                    <span class="text-[10px]">Live Mode</span>
-                    <input type="checkbox" id="auto-refresh" class="accent-green-500" onchange="toggleAutoRefresh()">
-                </div>
-            </div>
-        </div>
-        
-        <div class="flex items-center gap-2 mb-1">
-            <span class="text-[10px] text-slate-400">تاییدیه تایم بالا (HTF):</span>
-            <input type="checkbox" id="use-htf" class="accent-blue-500" checked>
-        </div>
-
-        <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm transition-all active:scale-95">
-            آنالیز هوشمند + محاسبه حجم ⚡
-        </button>
-
-        <div id="results" class="hidden flex flex-col gap-3">
-            <div id="signal-box" class="text-center p-3 rounded-xl font-black text-xl border-2 bg-slate-800">---</div>
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- Header & Control Panel -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl font-extrabold text-blue-400">Pro Trader AI 7.5</h1>
+            <p class="text-slate-400">تحلیل کامل و پیش‌بینی بازارهای مالی با مدل‌های یادگیری ماشین</p>
             
-            <div>
-                <div class="meter-container"><div class="meter-marker"></div><div id="score-fill" class="meter-fill bg-slate-500" style="width: 0; left: 50%"></div></div>
-                <div class="text-center mt-1 text-[10px] font-mono text-yellow-400" id="score-text">Score: 0</div>
-            </div>
+            <!-- Trading Controls (Risk, RR, SL Type, Live Mode) -->
+            <div class="card p-4 mb-4 grid grid-cols-2 md:grid-cols-6 gap-4 items-end">
+                <!-- Trading Inputs -->
+                <div>
+                    <label for="capital" class="label block text-right mb-1">سرمایه ($)</label>
+                    <input type="number" id="capital" value="10000" min="100" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label for="risk" class="label block text-right mb-1">ریسک (%)</label>
+                    <input type="number" id="risk" value="1" min="0.1" max="10" step="0.1" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label for="rr" class="label block text-right mb-1">R:R</label>
+                    <input type="number" id="rr" value="2.5" min="1.0" step="0.5" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                
+                <!-- Stop Loss Type -->
+                <div class="col-span-2 md:col-span-1">
+                    <label class="label block text-right mb-1">نوع استاپ لاس</label>
+                    <select id="stop-loss-type" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-blue-500 focus:border-blue-500 text-sm">
+                        <option value="static">استاتیک (کانال)</option>
+                        <option value="dynamic">داینامیک (ترند)</option>
+                        <option value="atr">ATR</option>
+                    </select>
+                </div>
 
-            <div class="bg-blue-900/20 border border-blue-500/30 p-2 rounded shadow-md">
-                <div class="text-[10px] text-blue-300 block mb-1">📰 اخبار (Sentiment):</div>
-                <p id="news-val" class="text-xs text-slate-200 leading-relaxed">---</p>
+                <!-- Live Mode Switch -->
+                <div class="flex flex-col justify-end items-center col-span-2 md:col-span-1">
+                    <label for="live-mode" class="label mb-2 text-center text-yellow-400">Live Mode</label>
+                    <div class="flex justify-center">
+                        <input type="checkbox" id="live-mode" class="toggle-checkbox" />
+                        <label for="live-mode" class="toggle-label"></label>
+                    </div>
+                </div>
             </div>
             
-            <div class="grid grid-cols-2 gap-2">
-                <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-purple-300">هوش مصنوعی</div>
-                    <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
+            <!-- Symbol & Timeframe Controls -->
+            <div class="flex flex-wrap gap-4 p-4 card justify-center">
+                <div class="flex-grow min-w-[150px]">
+                    <label for="symbol" class="label block text-right mb-1">نماد (Symbol)</label>
+                    <input type="text" id="symbol" value="BTC/USD" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:ring-blue-500 focus:border-blue-500 text-sm">
                 </div>
-                <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
-                    <div class="text-[9px] text-orange-300">رژیم بازار (ADX)</div>
-                    <div id="regime-val" class="text-[10px] font-bold text-white mt-1">---</div>
+                <div class="flex-grow min-w-[150px]">
+                    <label for="timeframe" class="label block text-right mb-1">تایم فریم (Timeframe)</label>
+                    <select id="timeframe" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-blue-500 focus:border-blue-500 text-sm">
+                        <option value="5min">5m</option>
+                        <option value="15min">15m</option>
+                        <option value="30min">30m</option>
+                        <option value="1h" selected>1h</option>
+                        <option value="4h">4h</option>
+                        <option value="1day">1D</option>
+                        <option value="1week">1W</option>
+                    </select>
+                </div>
+                <div class="flex-grow min-w-[150px]">
+                    <label for="outputsize" class="label block text-right mb-1">تعداد کندل‌ها</label>
+                    <input type="number" id="outputsize" value="1000" min="50" max="2000" class="w-full p-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="analyzeData()" class="w-full md:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-150 shadow-lg shadow-blue-500/50">
+                        شروع تحلیل
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- TradingView Chart -->
+        <div id="chart-section" class="card p-4 min-h-[400px]">
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height: 400px; width: 100%;">
+                <div id="tradingview_chart" style="height: 100%; width: 100%;"></div>
+                <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                <script type="text/javascript">
+                // Initialize TradingView Widget on load
+                window.onload = function() {
+                    new TradingView.widget(
+                    {
+                    "autosize": true,
+                    "symbol": "BINANCE:BTCUSDT", // Default symbol, will update dynamically if needed
+                    "interval": "60", // Default interval (1h), will update dynamically if needed
+                    "timezone": "Etc/UTC",
+                    "theme": "dark",
+                    "style": "1",
+                    "locale": "en",
+                    "toolbar_bg": "#f1f3f6",
+                    "enable_publishing": false,
+                    "allow_symbol_change": true,
+                    "container_id": "tradingview_chart"
+                    }
+                    );
+                }
+                </script>
+            </div>
+            <!-- TradingView Widget END -->
+        </div>
+
+        <!-- Main Analysis Section -->
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- 1. ML Ensemble Score Card (Full Width on Mobile) -->
+            <div id="ml-score-card" class="card p-6 lg:col-span-2 space-y-4">
+                <h2 class="ml-card-title text-center text-yellow-400">نتیجه نهایی هوش مصنوعی (Ensemble Score)</h2>
+                
+                <div class="flex flex-col md:flex-row items-center justify-around space-y-4 md:space-y-0 md:space-x-6">
+                    
+                    <!-- Prediction Message -->
+                    <div class="text-center flex-shrink-0">
+                        <p class="text-xl label mb-1">پیش‌بینی AI:</p>
+                        <p id="ai-val" class="text-2xl font-black text-white skeleton text-line w-40 mx-auto">---</p>
+                        <p id="ensemble-score-raw" class="text-xs text-slate-500 mt-1">Raw: 0.00</p>
+                    </div>
+
+                    <!-- Ensemble Meter -->
+                    <div class="flex-grow w-full max-w-sm">
+                        <p class="label text-center mb-1">امتیاز اجماع (Confidence)</p>
+                        <div class="meter-container">
+                            <!-- Fill moves from 50% based on score -->
+                            <div id="meter-fill" class="meter-fill" style="width: 50%; background: #94a3b8; left: 50%;"></div>
+                            <!-- Marker at 50% -->
+                            <div class="meter-marker"></div>
+                        </div>
+                        <div class="flex justify-between text-xs mt-1 text-slate-400">
+                            <span>قوی نزولی (-100)</span>
+                            <span>قوی صعودی (+100)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Individual Model Results -->
+                <div class="pt-4 border-t border-slate-700">
+                    <p class="label mb-2 text-center">نتایج مدل‌های فردی (احتمال | امتیاز)</p>
+                    <div id="ml-individual-results" class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div class="ml-detail-row"><span class="text-slate-400">LSTM</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                        <div class="ml-detail-row"><span class="text-slate-400">RandomForest</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                        <div class="ml-detail-row"><span class="text-slate-400">SVC</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                        <div class="ml-detail-row"><span class="text-slate-400">CNN</span><span class="font-mono text-slate-400">--% (0)</span></div>
+                    </div>
                 </div>
             </div>
 
-            <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
-                <div class="flex justify-between items-center mb-2">
-                    <p class="text-xs font-bold text-purple-300">گزارش Ensemble AI</p>
-                    <span id="ensemble-score-raw" class="font-mono text-[10px] bg-slate-700 px-2 rounded">Raw: 0</span>
+            <!-- 2. Summary & Price Card -->
+            <div class="card p-6 space-y-4 lg:col-span-1">
+                <h2 class="ml-card-title text-center text-teal-400">خلاصه بازار و قیمت</h2>
+                
+                <div class="flex justify-between items-center bg-slate-800 p-3 rounded-lg">
+                    <span class="label text-lg">قیمت فعلی:</span>
+                    <span id="close-price" class="text-3xl font-bold text-green-400 skeleton text-line w-24">--</span>
                 </div>
-                <div id="ml-individual-results"></div>
+                
+                <div class="indicator-row">
+                    <span class="label">تایم فریم بالاتر (HTF)</span>
+                    <span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded text-slate-400 skeleton text-line w-20">N/A</span>
+                </div>
+                <div class="indicator-row">
+                    <span class="label">وضعیت بازار (Regime)</span>
+                    <span id="regime-val" class="value text-slate-400 skeleton text-line w-16">N/A</span>
+                </div>
+                <div class="indicator-row">
+                    <span class="label">واگرایی (Divergence)</span>
+                    <span id="div-val" class="value text-slate-400 skeleton text-line w-28">N/A</span>
+                </div>
             </div>
 
-            <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-                <div class="stat-row"><span class="text-slate-400">قیمت لحظه‌ای</span><span id="price-val" class="font-mono font-bold text-yellow-400">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">روند (Trend)</span><span id="trend-val" class="font-bold">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">شاخص RSI</span><span id="rsi-val" class="font-mono font-bold text-cyan-400">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
-                <div class="stat-row"><span class="text-slate-400">تاییدیه تایم بالا</span><span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span></div>
-                <div class="stat-row"><span class="text-slate-400">واگرایی</span><span id="div-val" class="font-bold">---</span></div>
+            <!-- 3. Classic Indicators Card -->
+            <div class="card p-6 space-y-4 lg:col-span-2">
+                <h2 class="ml-card-title text-center text-blue-400">اندیکاتورهای کلاسیک</h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Column 1: Momentum -->
+                    <div>
+                        <h3 class="label font-bold mb-2 border-b border-slate-700">مومنتوم (Momentum)</h3>
+                        <div class="indicator-row">
+                            <span class="label">RSI (14)</span>
+                            <span id="rsi-val" class="value text-slate-300 font-mono skeleton text-line w-12">--</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">ADX/DIs (14)</span>
+                            <span id="adx-val" class="value text-slate-300 font-mono text-xs skeleton text-line w-32">-- | -- | --</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">MACD (12, 26, 9)</span>
+                            <span id="macd-val" class="value text-slate-300 font-mono text-xs skeleton text-line w-32">-- | --</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">Stochastic (K/D)</span>
+                            <span id="stoch-val" class="value text-slate-300 font-mono skeleton text-line w-16">-- | --</span>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: Volatility & Trend -->
+                    <div>
+                        <h3 class="label font-bold mb-2 border-b border-slate-700">نوسان و روند (Volatility/Trend)</h3>
+                        <div class="indicator-row">
+                            <span class="label">ATR (14)</span>
+                            <span id="atr-val" class="value text-slate-300 font-mono skeleton text-line w-16">--</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">Bollinger Bands (BB)</span>
+                            <span id="bbands-val" class="value text-slate-300 font-mono text-xs skeleton text-line w-32">U:-- | M:-- | L:--</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">Donchian Channel (DC)</span>
+                            <span id="donchian-val" class="value text-slate-300 font-mono text-xs skeleton text-line w-32">L:-- | R:--</span>
+                        </div>
+                        <div class="indicator-row">
+                            <span class="label">EMA/SMA Status</span>
+                            <span class="value text-slate-300 font-mono">OK</span> <!-- Placeholder, as comparison is in features -->
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2">
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-green-500"><span class="text-[10px] text-slate-400">TP (سود)</span><div id="tp-val" class="font-mono font-bold text-sm">---</div></div>
-                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-red-500"><span class="text-[10px] text-slate-400">SL (ضرر)</span><div id="sl-val" class="font-mono font-bold text-sm">---</div></div>
+            <!-- 4. ML Feature Importance Card -->
+            <div class="card p-6 space-y-4 lg:col-span-1">
+                <h2 class="ml-card-title text-center text-fuchsia-400">اهمیت ویژگی‌های AI (Feature Importance)</h2>
+                
+                <div id="feature-importance-list" class="space-y-2">
+                    <!-- Feature bars will be injected here -->
+                    <div class="indicator-row"><span class="label">RSI</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 20%;"></div></div></div>
+                    <div class="indicator-row"><span class="label">Close_to_EMA</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 30%;"></div></div></div>
+                    <div class="indicator-row"><span class="label">MACD</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 15%;"></div></div></div>
+                    <div class="indicator-row"><span class="label">BB_Width</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 10%;"></div></div></div>
+                    <div class="indicator-row"><span class="label">ADX</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 5%;"></div></div></div>
+                    <div class="indicator-row"><span class="label">Others</span><div class="meter-container w-2/3"><div class="meter-fill bg-fuchsia-500" style="width: 20%;"></div></div></div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-700">
+                    <p class="label text-center mb-1">دقت تست مدل‌ها (Model Test Accuracy)</p>
+                    <div id="model-accuracy-list" class="space-y-1">
+                        <!-- Accuracy values will be injected here -->
+                        <div class="flex justify-between text-xs text-slate-400"><span class="font-bold">LSTM</span><span class="text-green-400">75.3%</span></div>
+                        <div class="flex justify-between text-xs text-slate-400"><span class="font-bold">RF</span><span class="text-green-400">82.1%</span></div>
+                        <div class="flex justify-between text-xs text-slate-400"><span class="font-bold">SVC</span><span class="text-green-400">78.8%</span></div>
+                        <div class="flex justify-between text-xs text-slate-400"><span class="font-bold">CNN</span><span class="text-green-400">80.5%</span></div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="lot-box p-3 rounded-lg text-center flex flex-col items-center justify-center">
-                <span class="text-[10px] text-yellow-200 uppercase tracking-widest mb-1">💎 حجم پیشنهادی (Lot Size)</span>
-                <div id="lot-val" class="font-mono font-black text-2xl text-white drop-shadow-md">---</div>
-                <div id="risk-val" class="text-[9px] text-slate-400 mt-1">ریسک دلاری: ---</div>
-            </div>
+
+        </main>
+
+        <!-- Status & Error Message -->
+        <div id="status-message" class="card p-4 text-center text-sm text-slate-400">
+            برای شروع، نماد و تایم فریم را انتخاب کرده و دکمه "شروع تحلیل" را بزنید.
         </div>
     </div>
-    
-    <div id="chart-container" class="card h-[90vh] overflow-hidden rounded-xl"></div>
-</div>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
-<script>
-    const intervalMap = { 
-        "5min": "5", "15min": "15", "30min": "30", "1h": "60", 
-        "4h": "240", "1day": "D", "1week": "W", "1month": "M" 
-    };
-    
-    let refreshTimer = null; let countdownTimer = null;
-    
-    window.onload = () => loadChart("EUR/USD", "1h");
-
-    function syncChartOnly() { 
-        const s = document.getElementById("symbol").value; 
-        loadChart(s, document.getElementById("interval").value);
-        if(document.getElementById("auto-refresh").checked) runAnalysis();
-    }
-
-    function loadChart(symbol, intervalKey) {
-        let tvSymbol = "FX_IDC:" + symbol.replace("/", "");
-        if(symbol.includes("BTC")) tvSymbol = "BINANCE:BTCUSDT";
-        else if(symbol.includes("XAU")) tvSymbol = "FX_IDC:XAUUSD";
-        else if(symbol.includes("JPY")) tvSymbol = "FX_IDC:USDJPY";
+    <script>
+        // تعریف URL بک‌اند
+        const API_URL = "/analyze";
         
-        const container = document.getElementById("chart-container");
-        if(container) {
-            new TradingView.widget({ 
-                "autosize": true, "symbol": tvSymbol, "interval": intervalMap[intervalKey], 
-                "timezone": "Asia/Tehran", "theme": "dark", "style": "1", 
-                "container_id": "chart-container", 
-                "studies": ["RSI@tv-basicstudies", "SuperTrend@tv-basicstudies"] 
-            });
+        // تابع تبدیل رنگ بر اساس مقدار
+        function getColorByScore(score) {
+            if (score > 40) return 'text-green-500'; // قوی صعودی
+            if (score > 10) return 'text-green-400'; // صعودی
+            if (score < -40) return 'text-red-500'; // قوی نزولی
+            if (score < -10) return 'text-red-400'; // نزولی
+            return 'text-slate-400'; // خنثی
         }
-    }
 
-    function toggleAutoRefresh() {
-        const isChecked = document.getElementById("auto-refresh").checked;
-        const badge = document.getElementById("timer-badge");
-        if (isChecked) {
-            runAnalysis(); let seconds = 60; badge.classList.add("text-green-400");
-            refreshTimer = setInterval(() => runAnalysis(), 60000);
-            countdownTimer = setInterval(() => { seconds--; if(seconds <= 0) seconds = 60; badge.innerText = `Next: ${seconds}s`; }, 1000);
-        } else { clearInterval(refreshTimer); clearInterval(countdownTimer); badge.innerText = "00:00"; badge.classList.remove("text-green-400"); }
-    }
+        // --- توابع به‌روزرسانی UI ---
 
-    async function runAnalysis() {
-        const btn = document.getElementById("btn-analyze");
-        btn.disabled = true; btn.innerHTML = "⏳ در حال پردازش...";
-        document.getElementById("results").classList.remove("hidden");
-        
-        if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
-        
-        try {
-            const payload = {
-                symbol: document.getElementById("symbol").value,
-                interval: document.getElementById("interval").value,
-                use_htf: document.getElementById("use-htf").checked,
-                size: parseInt(document.getElementById("candle-size").value),
-                balance: parseFloat(document.getElementById("balance").value) || 1000,
-                risk: parseFloat(document.getElementById("risk").value) || 1.0,
-                rr: parseFloat(document.getElementById("rr-ratio").value) || 1.5,
-                sl_type: document.getElementById("sl-type").value
-            };
-
-            const res = await fetch('/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            if(data.error) throw new Error(data.error);
+        function updateMeter(score) {
+            const meterFill = document.getElementById("meter-fill");
             
-            renderData(data);
+            // نرمال‌سازی امتیاز از -100 تا 100 به 0 تا 100
+            const normalizedScore = (score + 100) / 2; 
+
+            let width;
+            let left;
+            let color;
+
+            if (score >= 0) {
+                // صعودی: عرض از 50% تا normalizedScore، موقعیت ثابت 50%
+                width = `${normalizedScore - 50}%`;
+                left = '50%';
+                color = score > 40 ? '#10b981' : '#34d399'; // Green/Emerald
+            } else {
+                // نزولی: عرض از normalizedScore تا 50%، موقعیت از normalizedScore
+                width = `${50 - normalizedScore}%`;
+                left = `${normalizedScore}%`;
+                color = score < -40 ? '#ef4444' : '#f87171'; // Red/Rose
+            }
             
-        } catch (e) { 
-            console.error(e); 
-            document.getElementById("signal-box").innerHTML = "⚠️ خطا";
-            document.getElementById("signal-box").className = "text-center p-3 rounded-xl border-2 border-red-500 text-red-400";
-            // حذف آلرت برای مزاحمت کمتر
-            console.log("خطا: " + e.message);
-        } 
-        finally { 
-            btn.disabled = false; btn.innerHTML = "آنالیز هوشمند + محاسبه حجم ⚡"; 
-            applySkeleton(false); 
+            // در حالت خنثی، اگر مقدار 0 باشد
+            if (score === 0) {
+                width = '0%';
+                left = '50%';
+                color = '#94a3b8'; // Slate
+            }
+            
+            meterFill.style.width = width;
+            meterFill.style.left = left;
+            meterFill.style.background = color;
         }
-    }
 
-    function renderData(data) {
-        // --- بخش اصلاح‌شده و ضد ضربه (Crash-Proof) ---
-        
-        const score = data.score || 0;
-        
-        // Score & Signal
-        const fill = document.getElementById("score-fill");
-        let pct = (score + 10) / 20 * 100; pct = Math.max(5, Math.min(95, pct));
-        fill.style.left = "0"; fill.style.width = `${pct}%`;
-        fill.className = `meter-fill ${score > 0 ? 'bg-green-500' : (score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
-        document.getElementById("score-text").innerText = `Score: ${score}`;
-        
-        const box = document.getElementById("signal-box");
-        const sig = data.signal || "neutral";
-        if(sig === "buy") { box.innerHTML = "🟢 خرید (BUY)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
-        else if(sig === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
-        else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
 
-        // Data (استفاده از Optional Chaining برای جلوگیری از کرش)
-        document.getElementById("price-val").innerText = data.price || "---";
-        
-        // Setup Object Safe Access
-        const setup = data.setup || {};
-        document.getElementById("tp-val").innerText = setup.tp || "-";
-        document.getElementById("sl-val").innerText = setup.sl || "-";
-        document.getElementById("lot-val").innerText = setup.lot_size || "0";
-        document.getElementById("risk-val").innerText = `ریسک دلاری: $${setup.risk_amt || 0}`;
-        
-        // Indicators Object Safe Access
-        const indicators = data.indicators || {};
-        document.getElementById("sr-val").innerText = indicators.sr_levels || "---";
-        document.getElementById("news-val").innerText = indicators.news || "---";
-        
-        // Trend Translation
-        const trendMap = { "Uptrend": "صعودی 🟢", "Downtrend": "نزولی 🔴" };
-        const trendRaw = indicators.trend || "N/A";
-        const trendEl = document.getElementById("trend-val");
-        trendEl.innerText = trendMap[trendRaw] || trendRaw;
-        trendEl.className = trendRaw.includes("Up") ? "font-bold text-green-400" : (trendRaw.includes("Down") ? "font-bold text-red-400" : "font-bold");
+        function updateMLDetails(indicators) {
+            // Update AI Report Message and Raw Score
+            const aiReport = indicators.ai_report || {};
+            document.getElementById("ai-val").innerText = aiReport.message || "N/A";
+            document.getElementById("ai-val").className = `text-2xl font-black ${getColorByScore(aiReport.ensemble_score || 0)}`;
+            document.getElementById("ensemble-score-raw").innerText = `امتیاز نهایی: ${aiReport.ensemble_score || 0}`;
 
-        document.getElementById("rsi-val").innerText = indicators.rsi || "---";
-        document.getElementById("regime-val").innerText = indicators.regime || "---";
-        document.getElementById("div-val").innerText = indicators.divergence || "---";
+            // Update Ensemble Meter
+            updateMeter(aiReport.ensemble_score || 0);
 
-        const htfEl = document.getElementById("htf-val");
-        const htfStatus = indicators.htf_status || "N/A";
-        const htfTrend = indicators.htf_trend || "N/A";
-        htfEl.innerText = htfStatus;
-        htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfTrend === "Bullish" ? "text-green-400" : (htfTrend === "Bearish" ? "text-red-400" : "text-slate-400")}`;
-
-        // AI Report Safe Access
-        const aiReport = indicators.ai_report || {};
-        document.getElementById("ai-val").innerText = aiReport.message || "N/A";
-        document.getElementById("ensemble-score-raw").innerText = `Raw: ${aiReport.ensemble_score || 0}`;
-
-        const indContainer = document.getElementById("ml-individual-results");
-        indContainer.innerHTML = '';
-        const indivResults = aiReport.individual_results || {};
-        
-        for (const [key, value] of Object.entries(indivResults)) {
-            const color = value.score > 0 ? 'text-green-400' : (value.score < 0 ? 'text-red-400' : 'text-slate-400');
-            indContainer.innerHTML += `<div class="ml-detail-row"><span class="text-slate-400">${key}</span><span class="font-mono ${color}">${value.prob}% (${value.score})</span></div>`;
+            // Update Individual Model Results
+            const indContainer = document.getElementById("ml-individual-results");
+            indContainer.innerHTML = '';
+            const indivResults = aiReport.individual_results || {};
+            
+            for (const [key, value] of Object.entries(indivResults)) {
+                const color = value.score > 0 ? 'text-green-400' : (value.score < 0 ? 'text-red-400' : 'text-slate-400');
+                indContainer.innerHTML += `<div class=\"ml-detail-row\"><span class=\"text-slate-400\">${key}</span><span class=\"font-mono ${color}\">${value.prob || '--'}% (${value.score || '0.0'})</span></div>`;
+            }
         }
-    }
+        
+        function updateFeatureImportance(importances) {
+             const importanceList = document.getElementById("feature-importance-list");
+             importanceList.innerHTML = '';
+             
+             // Sort importances
+             const sortedImportances = Object.entries(importances || {})
+                 .sort(([, a], [, b]) => b - a);
 
-    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "tp-val", "sl-val", "lot-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
-</script>
+             // Inject new rows
+             sortedImportances.forEach(([key, value]) => {
+                 const percentage = Math.round(value * 100);
+                 if (percentage > 0) {
+                     importanceList.innerHTML += `
+                         <div class="indicator-row">
+                             <span class="label text-sm">${key}</span>
+                             <div class="meter-container w-2/3">
+                                 <div class="meter-fill bg-fuchsia-500" style="width: ${percentage}%;"></div>
+                             </div>
+                         </div>`;
+                 }
+             });
+        }
+        
+        function updateModelAccuracy(accuracy) {
+             const accuracyList = document.getElementById("model-accuracy-list");
+             accuracyList.innerHTML = '';
+             
+             // Inject accuracy values
+             for (const [key, value] of Object.entries(accuracy || {})) {
+                 const percentage = parseFloat(value).toFixed(1);
+                 accuracyList.innerHTML += `
+                    <div class="flex justify-between text-xs text-slate-400">
+                        <span class="font-bold">${key}</span>
+                        <span class="text-green-400">${percentage}%</span>
+                    </div>`;
+             }
+        }
+
+
+        function updateIndicators(data) {
+            const indicators = data.indicators || {};
+
+            // 1. Update Price and Summary
+            document.getElementById("close-price").innerText = parseFloat(data.last_close).toLocaleString();
+            document.getElementById("regime-val").innerText = indicators.regime;
+            document.getElementById("div-val").innerText = indicators.divergence;
+
+            const htfEl = document.getElementById("htf-val");
+            const htfStatus = indicators.htf_status || "N/A";
+            const htfTrend = indicators.htf_trend || "N/A";
+            htfEl.innerText = htfStatus;
+            htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfTrend === "Strong Bullish" ? "bg-green-600/30 text-green-400" : (htfTrend === "Strong Bearish" ? "bg-red-600/30 text-red-400" : (htfTrend === "Bullish" ? "bg-green-600/10 text-green-400" : (htfTrend === "Bearish" ? "bg-red-600/10 text-red-400" : "text-slate-400")))}`;
+
+
+            // 2. Update Classic Indicators
+            document.getElementById("rsi-val").innerText = parseFloat(indicators.rsi).toFixed(2);
+            document.getElementById("adx-val").innerText = indicators.adx;
+            document.getElementById("macd-val").innerText = indicators.macd;
+            document.getElementById("stoch-val").innerText = indicators.stoch;
+            document.getElementById("atr-val").innerText = parseFloat(indicators.atr).toFixed(4);
+            document.getElementById("bbands-val").innerText = indicators.bbands;
+            document.getElementById("donchian-val").innerText = indicators.donchian;
+        }
+
+        function updateUI(data) {
+            updateIndicators(data);
+            updateMLDetails(data.indicators);
+            updateFeatureImportance(data.indicators.ai_report.importances);
+            updateModelAccuracy(data.indicators.ai_report.accuracy);
+        }
+
+        // --- تابع اصلی تحلیل ---
+
+        async function analyzeData() {
+            const symbol = document.getElementById("symbol").value.trim();
+            const timeframe = document.getElementById("timeframe").value;
+            // NEW: Get output size
+            const outputsize = document.getElementById("outputsize").value; 
+            
+            // NEW: Get trading parameters (Optional: For future backend integration)
+            const capital = document.getElementById("capital").value;
+            const risk = document.getElementById("risk").value;
+            const rr = document.getElementById("rr").value;
+            const stopLossType = document.getElementById("stop-loss-type").value;
+            const liveMode = document.getElementById("live-mode").checked;
+            
+            const statusEl = document.getElementById("status-message");
+
+            if (!symbol || !timeframe || !outputsize) {
+                statusEl.innerHTML = '<span class="text-red-400">لطفاً نماد، تایم فریم و تعداد کندل‌ها را وارد کنید.</span>';
+                return;
+            }
+
+            statusEl.innerHTML = '<span class="text-blue-400">... در حال دریافت داده و انجام تحلیل (لطفاً صبر کنید) ...</span>';
+            applySkeleton(true);
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // Send all parameters to backend
+                    body: JSON.stringify({ 
+                        symbol, 
+                        timeframe, 
+                        outputsize: parseInt(outputsize),
+                        capital: parseFloat(capital),
+                        risk: parseFloat(risk),
+                        rr: parseFloat(rr),
+                        stopLossType,
+                        liveMode 
+                    }) 
+                });
+
+                const result = await response.json();
+
+                if (result.error) {
+                    statusEl.innerHTML = `<span class="text-red-400">خطا در تحلیل: ${result.error}</span>`;
+                    applySkeleton(false);
+                    return;
+                }
+
+                updateUI(result);
+                statusEl.innerHTML = `<span class="text-green-400">✅ تحلیل برای ${symbol} در تایم فریم ${timeframe} با ${outputsize} کندل با موفقیت انجام شد.</span>`;
+                
+                // Optional: Update TradingView widget if it's already loaded (advanced)
+                // This part requires access to the TradingView API object, which might be tricky in a single file setup.
+                // We assume the user updates the symbol/interval manually in the widget for now, 
+                // or we leave it static as requested by the provided widget code.
+
+            } catch (e) {
+                statusEl.innerHTML = `<span class="text-red-400">خطای شبکه یا سرور: ${e.message}</span>`;
+                console.error("Fetch Error:", e);
+            } finally {
+                applySkeleton(false);
+            }
+        }
+        
+        // --- تابع مدیریت حالت بارگذاری (اسکلتون) ---
+        
+        function applySkeleton(active) {
+            const elements = [
+                'ai-val', 'close-price', 'htf-val', 'regime-val', 'div-val',
+                'rsi-val', 'adx-val', 'macd-val', 'stoch-val', 'atr-val',
+                'bbands-val', 'donchian-val'
+            ];
+
+            const action = active ? 'add' : 'remove';
+            
+            // Apply skeleton to single elements
+            elements.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.classList[action]('skeleton');
+                    el.classList[action]('text-line');
+                }
+            });
+
+            // Reset/Clear dynamic content
+            if (active) {
+                 document.getElementById("ai-val").innerText = '---';
+                 document.getElementById("close-price").innerText = '--';
+                 document.getElementById("ensemble-score-raw").innerText = 'Raw: 0.00';
+                 document.getElementById("ml-individual-results").innerHTML = ''; // Clear ML details
+                 // Reset meter
+                 document.getElementById("meter-fill").style.width = '0%';
+                 document.getElementById("meter-fill").style.left = '50%';
+                 document.getElementById("meter-fill").style.background = '#94a3b8';
+            }
+        }
+
+        // --- اجرای اولیه ---
+        // TradingView widget initialization is now handled by its own script block, 
+        // ensuring it loads correctly even before the main JS runs fully.
+        // window.onload = () => { ... }; 
+
+    </script>
 </body>
 </html>
