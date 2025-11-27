@@ -6,424 +6,299 @@
     <title>Pro Trader AI 7.5 (Ultimate)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
-    <!-- TradingView Widget Script -->
-    <script src="https://s3.tradingview.com/tv.js"></script>
     <style>
         :root { --bg-dark: #0f172a; --card-bg: #1e293b; --text-main: #e2e8f0; }
         body { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Vazirmatn', sans-serif; }
         .meter-container { width: 100%; height: 12px; background: #334155; border-radius: 6px; position: relative; overflow: hidden; }
         .meter-fill { height: 100%; position: absolute; transition: all 0.8s; }
         .meter-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; opacity: 0.5; }
-        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; padding: 1.5rem; }
-        .data-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.9rem; }
-        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.3rem; }
-        .signal-meter-score { font-size: 2rem; font-weight: bold; }
-        
-        /* Container for Chart and Analysis Panel */
-        @media (min-width: 1024px) {
-            #main-layout {
-                grid-template-columns: 2fr 1.5fr; /* 60% Chart, 40% Analysis */
-            }
-        }
-        #chart-container {
-            height: 400px; /* Fixed height for the chart */
-            min-height: 400px;
+        .card { background: var(--card-bg); border-radius: 1rem; border: 1px solid #334155; }
+        .v-grid { display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; padding: 1rem; }
+        @media (max-width: 1024px) { .v-grid { grid-template-columns: 1fr; } #chart-container { height: 500px; } }
+        .skeleton { animation: pulse 1.5s infinite; background: #334155; color: transparent !important; border-radius: 4px; }
+        @keyframes pulse { 50% { opacity: .5; } }
+        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; }
+        .ml-detail-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 4px 0; }
+        .lot-box {
+            background: linear-gradient(45deg, #1e293b, #334155);
+            border: 1px solid #facc15;
+            box-shadow: 0 0 10px rgba(250, 204, 21, 0.1);
         }
     </style>
 </head>
-<body class="p-4 sm:p-8 min-h-screen">
+<body>
 
-    <div class="max-w-7xl mx-auto space-y-6">
-
-        <!-- Header -->
-        <header class="text-center pb-4">
-            <h1 class="text-3xl font-extrabold text-blue-400">Pro Trader AI 7.5 (Ultimate)</h1>
-            <p class="text-slate-400 mt-2">سامانه تحلیلگر هوشمند با یادگیری عمیق و اندیکاتورهای کلاسیک</p>
-        </header>
-
-        <!-- Main Layout: Chart (Left) and Analysis (Right) -->
-        <div id="main-layout" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            <!-- Col 1: TradingView Chart -->
-            <div id="chart-panel" class="card p-0 overflow-hidden">
-                <div id="chart-container" class="w-full">
-                    <!-- TradingView Widget will load here -->
-                </div>
-            </div>
-
-            <!-- Col 2: Control Panel & AI Dashboard -->
-            <div id="analysis-panel" class="space-y-6">
-                <!-- Control Panel -->
-                <div class="card flex flex-col sm:flex-row gap-4 sm:gap-6 justify-between items-stretch sm:items-end">
-                    <div class="flex-grow space-y-3">
-                        <div class="flex flex-col sm:flex-row gap-3">
-                            <label class="block w-full sm:w-1/2">
-                                <span class="text-slate-300 text-sm mb-1 block">نماد (Symbol)</span>
-                                <input type="text" id="symbol-input" value="AAPL" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500" />
-                            </label>
-                            <label class="block w-full sm:w-1/2">
-                                <span class="text-slate-300 text-sm mb-1 block">تایم‌فریم (Timeframe)</span>
-                                <select id="timeframe-select" class="w-full bg-slate-700 text-white rounded-lg p-2 border border-slate-600 focus:ring-blue-500 focus:border-blue-500">
-                                    <option value="5min">5min</option>
-                                    <option value="15min">15min</option>
-                                    <option value="30min">30min</option>
-                                    <option value="1h" selected>1h</option>
-                                    <option value="4h">4h</option>
-                                    <option value="1day">1day</option>
-                                </select>
-                            </label>
-                        </div>
-                    </div>
-                    <button id="analyze-button" class="mt-4 sm:mt-0 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200 shadow-lg shadow-blue-500/50">
-                        شروع تحلیل
-                    </button>
-                </div>
-
-                <!-- AI Analysis Card -->
-                <div class="card space-y-4">
-                    <h2 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">گزارش هوش مصنوعی (Ensemble AI)</h2>
-                    
-                    <!-- Meter -->
-                    <div class="text-center pt-2">
-                        <p class="text-slate-400 mb-2">امتیاز سیگنال نهایی (Normalised):</p>
-                        <div class="flex justify-center items-end">
-                            <span id="score-label" class="text-4xl font-extrabold text-blue-400 signal-meter-score">0.00</span>
-                            <span class="text-sm text-slate-500 mr-2" id="ensemble-score-raw">Raw: 0</span>
-                        </div>
-                        
-                        <!-- Meter Bar -->
-                        <div class="meter-container mt-4">
-                            <div id="meter-fill" class="meter-fill w-1/2 bg-slate-500"></div>
-                            <div class="meter-marker"></div>
-                        </div>
-                        <div class="flex justify-between text-xs mt-1 text-slate-400">
-                            <span>قوی‌ترین فروش (-10)</span>
-                            <span>خنثی (0)</span>
-                            <span>قوی‌ترین خرید (+10)</span>
-                        </div>
-                    </div>
-
-                    <!-- AI Message -->
-                    <div class="data-row border-t border-slate-700 pt-4">
-                        <span class="text-slate-300">نتیجه نهایی مدل:</span>
-                        <span id="ai-val" class="font-bold text-lg text-white text-right">در حال انتظار...</span>
-                    </div>
-                </div>
-
-            </div>
-
+<div class="v-grid min-h-screen">
+    <div class="card p-4 h-fit flex flex-col gap-3">
+        <div class="flex justify-between items-center border-b border-slate-700 pb-3">
+            <h2 class="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
+                💎 Pro Trader 7.5
+            </h2>
+            <div class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono" id="timer-badge">00:00</div>
         </div>
 
-        <!-- Detailed Indicators & ML Details - Below Main Layout -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="grid grid-cols-3 gap-2">
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">نماد</label>
+                <select id="symbol" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="EUR/USD">EUR/USD</option>
+                    <option value="GBP/USD">GBP/USD</option>
+                    <option value="USD/JPY">USD/JPY</option>
+                    <option value="XAU/USD">XAU/USD</option>
+                    <option value="BTC/USD">BTC/USD</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">تایم‌فریم</label>
+                <select id="interval" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm" onchange="syncChartOnly()">
+                    <option value="5min">5 Min</option>
+                    <option value="15min">15 Min</option>
+                    <option value="30min">30 Min</option>
+                    <option value="1h" selected>1 Hour</option>
+                    <option value="4h">4 Hour</option>
+                    <option value="1day">1 Day</option>
+                    <option value="1week">1 Week</option>
+                    <option value="1month">1 Month</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">کندل‌ها</label>
+                <input type="number" id="candle-size" value="1000" min="100" max="2500" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center">
+            </div>
+        </div>
 
-            <!-- Col 1: Price & Summary -->
-            <div class="card space-y-4">
-                <h2 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">خلاصه تحلیل</h2>
-                <div class="data-row">
-                    <span class="text-slate-400">نماد/تایم‌فریم:</span>
-                    <span id="symbol-tf-val" class="font-bold text-green-400">AAPL / 1h</span>
-                </div>
-                <div class="data-row">
-                    <span class="text-slate-400">آخرین قیمت (USD):</span>
-                    <span id="price-val" class="font-bold text-lg text-white">---</span>
-                </div>
-                <div class="data-row">
-                    <span class="text-slate-400">روند فعلی (MACD):</span>
-                    <span id="trend-val" class="font-bold text-white">---</span>
-                </div>
-                <div class="data-row">
-                    <span class="text-slate-400">تایم‌فریم بالاتر (HTF):</span>
-                    <span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded text-slate-400">---</span>
-                </div>
-                <div class="data-row">
-                    <span class="text-slate-400">وضعیت واگرایی:</span>
-                    <span id="div-val" class="font-bold text-yellow-400">---</span>
+        <div class="grid grid-cols-3 gap-2 border-t border-slate-700 pt-2">
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">سرمایه ($)</label>
+                <input type="number" id="balance" value="1000" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-green-400">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">ریسک (%)</label>
+                <input type="number" id="risk" value="1.0" step="0.1" max="100" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-red-400">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">R:R</label>
+                <input type="number" id="rr-ratio" value="1.5" step="0.1" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-yellow-400">
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 mt-1">
+            <div>
+                <label class="text-[10px] text-slate-400 block mb-1">نوع استاپ لاس</label>
+                <select id="sl-type" class="w-full p-2 bg-slate-800 border border-slate-700 rounded text-sm text-center text-purple-300">
+                    <option value="static">استاتیک (کانال)</option>
+                    <option value="dynamic">داینامیک (ترند)</option>
+                </select>
+            </div>
+            <div class="flex flex-col justify-end">
+                <div class="bg-slate-800 p-2 rounded flex justify-between items-center border border-slate-700 h-[38px]">
+                    <span class="text-[10px]">Live Mode</span>
+                    <input type="checkbox" id="auto-refresh" class="accent-green-500" onchange="toggleAutoRefresh()">
                 </div>
             </div>
+        </div>
+        
+        <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] text-slate-400">تاییدیه تایم بالا (HTF):</span>
+            <input type="checkbox" id="use-htf" class="accent-blue-500" checked>
+        </div>
 
-            <!-- Col 2: Classic Indicators -->
-            <div class="card space-y-4">
-                <h3 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">اندیکاتورهای کلاسیک</h3>
-                <div class="data-row"><span class="text-slate-400">سوپر ترند (Super Trend):</span> <span id="st-val" class="font-mono text-white">---</span></div>
-                <div class="data-row"><span class="text-slate-400">ای‌دی‌ایکس (ADX):</span> <span id="adx-val" class="font-mono text-white">---</span></div>
-                <div class="data-row"><span class="text-slate-400">آر‌اس‌آی (RSI):</span> <span id="rsi-val" class="font-mono text-white">---</span></div>
-                <div class="data-row"><span class="text-slate-400">کانال دانچین (Regime):</span> <span id="regime-val" class="font-mono text-white">---</span></div>
+        <button onclick="runAnalysis()" id="btn-analyze" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow-lg text-sm transition-all active:scale-95">
+            آنالیز هوشمند + محاسبه حجم ⚡
+        </button>
+
+        <div id="results" class="hidden flex flex-col gap-3">
+            <div id="signal-box" class="text-center p-3 rounded-xl font-black text-xl border-2 bg-slate-800">---</div>
+            
+            <div>
+                <div class="meter-container"><div class="meter-marker"></div><div id="score-fill" class="meter-fill bg-slate-500" style="width: 0; left: 50%"></div></div>
+                <div class="text-center mt-1 text-[10px] font-mono text-yellow-400" id="score-text">Score: 0</div>
+            </div>
+
+            <div class="bg-blue-900/20 border border-blue-500/30 p-2 rounded shadow-md">
+                <div class="text-[10px] text-blue-300 block mb-1">📰 اخبار (Sentiment):</div>
+                <p id="news-val" class="text-xs text-slate-200 leading-relaxed">---</p>
             </div>
             
-            <!-- Col 3: ML Individual Results -->
-            <div class="card space-y-4">
-                <h3 class="text-xl font-bold text-blue-300 border-b border-slate-600 pb-2">نتایج انفرادی مدل‌ها</h3>
-                <div id="ml-individual-results" class="space-y-3">
-                    <div class="ml-detail-row"><span class="text-slate-400">RSI_Signal</span><span class="font-mono text-slate-400">--% (0)</span></div>
-                    <div class="ml-detail-row"><span class="text-slate-400">MACD_Cross</span><span class="font-mono text-slate-400">--% (0)</span></div>
-                    <div class="ml-detail-row"><span class="text-slate-400">SuperTrend_Touch</span><span class="font-mono text-slate-400">--% (0)</span></div>
+            <div class="grid grid-cols-2 gap-2">
+                <div class="bg-purple-900/30 border border-purple-500/30 p-2 rounded text-center">
+                    <div class="text-[9px] text-purple-300">هوش مصنوعی</div>
+                    <div id="ai-val" class="text-[10px] font-bold text-white mt-1">---</div>
+                </div>
+                <div class="bg-orange-900/30 border border-orange-500/30 p-2 rounded text-center">
+                    <div class="text-[9px] text-orange-300">رژیم بازار (ADX)</div>
+                    <div id="regime-val" class="text-[10px] font-bold text-white mt-1">---</div>
                 </div>
             </div>
-        </div>
 
+            <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-700/50">
+                <div class="flex justify-between items-center mb-2">
+                    <p class="text-xs font-bold text-purple-300">گزارش Ensemble AI</p>
+                    <span id="ensemble-score-raw" class="font-mono text-[10px] bg-slate-700 px-2 rounded">Raw: 0</span>
+                </div>
+                <div id="ml-individual-results"></div>
+            </div>
 
-        <!-- Status & Error Message -->
-        <div id="status-message" class="text-center mt-6 text-sm text-slate-500">
-            برای شروع، نماد و تایم‌فریم را انتخاب کرده و دکمه "شروع تحلیل" را بزنید.
+            <div class="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                <div class="stat-row"><span class="text-slate-400">قیمت لحظه‌ای</span><span id="price-val" class="font-mono font-bold text-yellow-400">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">روند (Trend)</span><span id="trend-val" class="font-bold">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">شاخص RSI</span><span id="rsi-val" class="font-mono font-bold text-cyan-400">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">حمایت / مقاومت</span><span id="sr-val" class="font-mono text-[10px]">---</span></div>
+                <div class="stat-row"><span class="text-slate-400">تاییدیه تایم بالا</span><span id="htf-val" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700">غیرفعال</span></div>
+                <div class="stat-row"><span class="text-slate-400">واگرایی</span><span id="div-val" class="font-bold">---</span></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-green-500"><span class="text-[10px] text-slate-400">TP (سود)</span><div id="tp-val" class="font-mono font-bold text-sm">---</div></div>
+                <div class="bg-slate-800 p-2 rounded text-center border-b-2 border-red-500"><span class="text-[10px] text-slate-400">SL (ضرر)</span><div id="sl-val" class="font-mono font-bold text-sm">---</div></div>
+            </div>
+            
+            <div class="lot-box p-3 rounded-lg text-center flex flex-col items-center justify-center">
+                <span class="text-[10px] text-yellow-200 uppercase tracking-widest mb-1">💎 حجم پیشنهادی (Lot Size)</span>
+                <div id="lot-val" class="font-mono font-black text-2xl text-white drop-shadow-md">---</div>
+                <div id="risk-val" class="text-[9px] text-slate-400 mt-1">ریسک دلاری: ---</div>
+            </div>
         </div>
     </div>
+    
+    <div id="chart-container" class="card h-[90vh] overflow-hidden rounded-xl"></div>
+</div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const analyzeButton = document.getElementById('analyze-button');
-            const symbolInput = document.getElementById('symbol-input');
-            const timeframeSelect = document.getElementById('timeframe-select');
-            const statusMessage = document.getElementById('status-message');
-            const chartContainer = document.getElementById('chart-container');
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+    const intervalMap = { 
+        "5min": "5", "15min": "15", "30min": "30", "1h": "60", 
+        "4h": "240", "1day": "D", "1week": "W", "1month": "M" 
+    };
+    
+    let refreshTimer = null; let countdownTimer = null;
+    
+    window.onload = () => loadChart("EUR/USD", "1h");
 
-            // ------------------------------------------------------------------
-            // State and Utility Functions
-            // ------------------------------------------------------------------
-            let currentRequest = null;
-            const BASE_URL = window.location.origin;
+    function syncChartOnly() { 
+        const s = document.getElementById("symbol").value; 
+        loadChart(s, document.getElementById("interval").value);
+        if(document.getElementById("auto-refresh").checked) runAnalysis();
+    }
 
-            function setStatus(message, isError = false) {
-                statusMessage.innerHTML = message;
-                statusMessage.className = `text-center mt-6 text-sm ${isError ? 'text-red-400 font-bold' : 'text-slate-500'}`;
-            }
-
-            // Function to handle exponential backoff for retries
-            async function fetchWithBackoff(url, options, maxRetries = 5) {
-                for (let i = 0; i < maxRetries; i++) {
-                    try {
-                        const response = await fetch(url, options);
-                        if (!response.ok) {
-                            // Check for rate limit or server error
-                            if (response.status === 429 && i < maxRetries - 1) {
-                                throw new Error('Rate limit exceeded. Retrying...');
-                            }
-                            // The server now sends error messages in JSON body on 500 status
-                            const errorData = await response.json().catch(() => ({}));
-                            throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
-                        }
-                        return response;
-                    } catch (error) {
-                        if (i === maxRetries - 1) {
-                            // Last attempt failed
-                            throw error;
-                        }
-                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
-                }
-            }
-
-            // ------------------------------------------------------------------
-            // TradingView Widget Initialization
-            // ------------------------------------------------------------------
-            function loadTradingViewChart(symbol, interval) {
-                if (window.TradingView) {
-                    chartContainer.innerHTML = ''; // Clear previous widget
-                    new window.TradingView.widget({
-                        "container_id": "chart-container",
-                        "autosize": true,
-                        "symbol": symbol,
-                        "interval": interval === '1day' ? 'D' : (interval === '1week' ? 'W' : (interval === '1month' ? 'M' : interval)),
-                        "timezone": "Etc/UTC",
-                        "theme": "dark",
-                        "style": "1",
-                        "locale": "en",
-                        "toolbar_bg": "#f1f3f6",
-                        "enable_publishing": false,
-                        "allow_symbol_change": true,
-                        "calendar": false,
-                        "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies", "SuperTrend@tv-basicstudies"],
-                        "withdateranges": true,
-                        "show_popup_button": true,
-                        "popup_width": "1000",
-                        "popup_height": "650",
-                        "hide_side_toolbar": false,
-                        "details": false,
-                        "hotlist": false,
-                        "news": false
-                    });
-                }
-            }
-
-            // ------------------------------------------------------------------
-            // Dashboard Update Logic (Error-Proofing Implemented Here)
-            // ------------------------------------------------------------------
-            function updateDashboard(data) {
-                // Safe access to top level properties
-                const indicators = data.indicators || {};
-                const symbol = data.symbol || 'N/A';
-                const timeframe = data.timeframe || 'N/A';
-                // Price safe access and formatting
-                const price = data.price !== undefined ? parseFloat(data.price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4}) : '---';
-
-                // Update general stats
-                document.getElementById("symbol-tf-val").innerText = `${symbol} / ${timeframe}`;
-                document.getElementById("price-val").innerText = price;
-                document.getElementById("trend-val").innerText = indicators.last_trend || "N/A";
-                document.getElementById("st-val").innerText = indicators.super_trend || "---";
-                document.getElementById("adx-val").innerText = indicators.adx || "---";
-                document.getElementById("rsi-val").innerText = indicators.rsi || "N/A";
-                document.getElementById("regime-val").innerText = indicators.regime || "N/A";
-                document.getElementById("div-val").innerText = indicators.divergence || "N/A";
-
-                // HTF Status Safe Access and Styling
-                const htfEl = document.getElementById("htf-val");
-                const htfStatus = indicators.htf_status || "N/A";
-                const htfTrend = indicators.htf_trend || "N/A";
-                htfEl.innerText = `${htfTrend} (${htfStatus})`;
-                let htfColorClass = 'text-slate-400';
-                if (htfTrend.includes("Bullish")) {
-                    htfColorClass = 'text-green-400';
-                } else if (htfTrend.includes("Bearish")) {
-                    htfColorClass = 'text-red-400';
-                }
-                htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${htfColorClass}`;
-
-                // AI Report Safe Access
-                const aiReport = indicators.ai_report || {};
-                const finalScore = aiReport.ml_score_final !== undefined ? parseFloat(aiReport.ml_score_final) : 0;
-                const rawScore = aiReport.ensemble_score !== undefined ? aiReport.ensemble_score : 0;
-                
-                document.getElementById("ai-val").innerText = aiReport.message || "N/A";
-                document.getElementById("ensemble-score-raw").innerText = `Raw: ${rawScore}`;
-                
-                // Update Score Label
-                document.getElementById("score-label").innerText = finalScore.toFixed(2);
-                let scoreColorClass = 'text-slate-400';
-                if (finalScore > 0) {
-                    scoreColorClass = 'text-green-400';
-                } else if (finalScore < 0) {
-                    scoreColorClass = 'text-red-400';
-                }
-                document.getElementById("score-label").className = `signal-meter-score ${scoreColorClass}`;
-
-                // Update Meter Bar
-                const meterFill = document.getElementById("meter-fill");
-                // Final score is between -10 and +10 (normalized to 0-100% for the bar)
-                const barPosition = Math.max(0, Math.min(100, (finalScore + 10) * 5)); 
-                let barColor;
-                if (finalScore > 2) { barColor = 'bg-green-500'; }
-                else if (finalScore < -2) { barColor = 'bg-red-500'; }
-                else if (finalScore > 0) { barColor = 'bg-lime-500'; }
-                else if (finalScore < 0) { barColor = 'bg-amber-500'; }
-                else { barColor = 'bg-slate-500'; }
-
-                meterFill.style.width = `${barPosition}%`;
-                meterFill.className = `meter-fill ${barColor}`;
-
-
-                // Individual ML Results Safe Access
-                const indContainer = document.getElementById("ml-individual-results");
-                indContainer.innerHTML = '';
-                const indivResults = aiReport.individual_results || {};
-                
-                if (Object.keys(indivResults).length === 0) {
-                    indContainer.innerHTML = `<div class="text-slate-500">تحلیل انفرادی موجود نیست.</div>`;
-                } else {
-                    for (const [key, value] of Object.entries(indivResults)) {
-                        // Safe access to nested values
-                        const score = value.score !== undefined ? value.score : 0;
-                        const prob = value.prob !== undefined ? value.prob : '--';
-                        const color = score > 0 ? 'text-green-400' : (score < 0 ? 'text-red-400' : 'text-slate-400');
-                        indContainer.innerHTML += `<div class=\"ml-detail-row\"><span class=\"text-slate-400\">${key}</span><span class=\"font-mono ${color}\">${prob}% (${score})</span></div>`;
-                    }
-                }
-            }
-
-            function applySkeleton(active = true) {
-                const elementsToHide = ['price-val', 'trend-val', 'htf-val', 'div-val', 'score-label', 'ai-val', 'ensemble-score-raw', 'st-val', 'adx-val', 'rsi-val', 'regime-val', 'ml-individual-results'];
-                const skeletonClass = 'bg-slate-700 animate-pulse rounded-md h-5 w-3/4 mx-auto';
-                
-                elementsToHide.forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) {
-                        if (active) {
-                            el.innerHTML = '<div class="' + skeletonClass + '"></div>';
-                            el.classList.add('flex', 'justify-end'); // Center skeleton for text fields
-                        } else {
-                            // Clear skeleton classes and restore original structure if needed
-                            el.classList.remove('flex', 'justify-end');
-                        }
-                    }
-                });
-
-                // Reset meter
-                const meterFill = document.getElementById("meter-fill");
-                meterFill.style.width = '50%';
-                meterFill.className = 'meter-fill bg-slate-500';
-            }
-
-
-            // ------------------------------------------------------------------
-            // Main Analysis Handler
-            // ------------------------------------------------------------------
-            async function runAnalysis() {
-                if (currentRequest) {
-                    return;
-                }
-
-                const symbol = symbolInput.value.toUpperCase().trim();
-                const timeframe = timeframeSelect.value;
-
-                if (!symbol || !timeframe) {
-                    setStatus("⚠️ لطفاً نماد و تایم‌فریم را وارد کنید.", true);
-                    return;
-                }
-
-                // 1. Update Chart
-                loadTradingViewChart(symbol, timeframe);
-
-                // 2. Run Analysis
-                applySkeleton(true);
-                analyzeButton.disabled = true;
-                analyzeButton.innerText = "در حال تحلیل...";
-                setStatus(`در حال دریافت و تحلیل داده‌های ${symbol} در ${timeframe}...`);
-
-                try {
-                    const payload = { symbol, timeframe };
-                    
-                    currentRequest = fetchWithBackoff(`${BASE_URL}/get_analysis`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    const response = await currentRequest;
-                    const data = await response.json();
-
-                    if (data.error) {
-                        // Display the detailed server error message
-                        setStatus(`❌ خطای تحلیل: ${data.error}`, true);
-                        applySkeleton(false);
-                    } else {
-                        updateDashboard(data);
-                        setStatus(`✅ تحلیل ${symbol} در ${timeframe} با موفقیت انجام شد.`);
-                        applySkeleton(false);
-                    }
-
-                } catch (error) {
-                    setStatus(`❌ خطای شبکه یا سرور (500): ${error.message}`, true);
-                    applySkeleton(false);
-                } finally {
-                    currentRequest = null;
-                    analyzeButton.disabled = false;
-                    analyzeButton.innerText = "شروع تحلیل";
-                }
-            }
-
-            // ------------------------------------------------------------------
-            // Event Listeners
-            // ------------------------------------------------------------------
-            analyzeButton.addEventListener('click', runAnalysis);
-            symbolInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') runAnalysis();
+    function loadChart(symbol, intervalKey) {
+        let tvSymbol = "FX_IDC:" + symbol.replace("/", "");
+        if(symbol.includes("BTC")) tvSymbol = "BINANCE:BTCUSDT";
+        else if(symbol.includes("XAU")) tvSymbol = "FX_IDC:XAUUSD";
+        else if(symbol.includes("JPY")) tvSymbol = "FX_IDC:USDJPY";
+        
+        const container = document.getElementById("chart-container");
+        if(container) {
+            new TradingView.widget({ 
+                "autosize": true, "symbol": tvSymbol, "interval": intervalMap[intervalKey], 
+                "timezone": "Asia/Tehran", "theme": "dark", "style": "1", 
+                "container_id": "chart-container", 
+                "studies": ["RSI@tv-basicstudies", "SuperTrend@tv-basicstudies"] 
             });
-            timeframeSelect.addEventListener('change', runAnalysis); // Re-run analysis on TF change
+        }
+    }
 
-            // Run initial analysis on load with default values
-            runAnalysis();
-        });
-    </script>
+    function toggleAutoRefresh() {
+        const isChecked = document.getElementById("auto-refresh").checked;
+        const badge = document.getElementById("timer-badge");
+        if (isChecked) {
+            runAnalysis(); let seconds = 60; badge.classList.add("text-green-400");
+            refreshTimer = setInterval(() => runAnalysis(), 60000);
+            countdownTimer = setInterval(() => { seconds--; if(seconds <= 0) seconds = 60; badge.innerText = `Next: ${seconds}s`; }, 1000);
+        } else { clearInterval(refreshTimer); clearInterval(countdownTimer); badge.innerText = "00:00"; badge.classList.remove("text-green-400"); }
+    }
+
+    async function runAnalysis() {
+        const btn = document.getElementById("btn-analyze");
+        btn.disabled = true; btn.innerHTML = "⏳ در حال پردازش...";
+        document.getElementById("results").classList.remove("hidden");
+        
+        if(!document.getElementById("auto-refresh").checked) applySkeleton(true);
+        
+        try {
+            const payload = {
+                symbol: document.getElementById("symbol").value,
+                interval: document.getElementById("interval").value,
+                use_htf: document.getElementById("use-htf").checked,
+                size: parseInt(document.getElementById("candle-size").value),
+                balance: parseFloat(document.getElementById("balance").value) || 1000,
+                risk: parseFloat(document.getElementById("risk").value) || 1.0,
+                rr: parseFloat(document.getElementById("rr-ratio").value) || 1.5,
+                sl_type: document.getElementById("sl-type").value
+            };
+
+            const res = await fetch('/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            if(data.error) throw new Error(data.error);
+            
+            renderData(data);
+            
+        } catch (e) { 
+            console.error(e); 
+            document.getElementById("signal-box").innerHTML = "⚠️ خطا";
+            document.getElementById("signal-box").className = "text-center p-3 rounded-xl border-2 border-red-500 text-red-400";
+            alert("خطا: " + e.message);
+        } 
+        finally { 
+            btn.disabled = false; btn.innerHTML = "آنالیز هوشمند + محاسبه حجم ⚡"; 
+            applySkeleton(false); 
+        }
+    }
+
+    function renderData(data) {
+        // Score & Signal
+        const fill = document.getElementById("score-fill");
+        let pct = (data.score + 10) / 20 * 100; pct = Math.max(5, Math.min(95, pct));
+        fill.style.left = "0"; fill.style.width = `${pct}%`;
+        fill.className = `meter-fill ${data.score > 0 ? 'bg-green-500' : (data.score < 0 ? 'bg-red-500' : 'bg-slate-500')}`;
+        document.getElementById("score-text").innerText = `Score: ${data.score}`;
+        
+        const box = document.getElementById("signal-box");
+        if(data.signal === "buy") { box.innerHTML = "🟢 خرید (BUY)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-green-500 bg-green-500/10 text-green-400"; }
+        else if(data.signal === "sell") { box.innerHTML = "🔴 فروش (SELL)"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-red-500 bg-red-500/10 text-red-400"; }
+        else { box.innerHTML = "⚪ خنثی"; box.className = "text-center p-3 rounded-xl font-black text-xl border-2 border-slate-500 bg-slate-500/10 text-slate-400"; }
+
+        // Data
+        document.getElementById("price-val").innerText = data.price;
+        document.getElementById("tp-val").innerText = data.setup.tp || "-";
+        document.getElementById("sl-val").innerText = data.setup.sl || "-";
+        document.getElementById("lot-val").innerText = data.setup.lot_size || "0";
+        document.getElementById("risk-val").innerText = `ریسک دلاری: $${data.setup.risk_amt}`;
+        document.getElementById("sr-val").innerText = data.indicators.sr_levels;
+        document.getElementById("news-val").innerText = data.indicators.news;
+        
+        // ✅ ترجمه روند و نمایش RSI
+        const trendMap = { "Uptrend": "صعودی 🟢", "Downtrend": "نزولی 🔴" };
+        const trendEl = document.getElementById("trend-val");
+        trendEl.innerText = trendMap[data.indicators.trend] || data.indicators.trend;
+        trendEl.className = data.indicators.trend.includes("Up") ? "font-bold text-green-400" : (data.indicators.trend.includes("Down") ? "font-bold text-red-400" : "font-bold");
+
+        document.getElementById("rsi-val").innerText = data.indicators.rsi;
+        document.getElementById("regime-val").innerText = data.indicators.regime;
+        document.getElementById("div-val").innerText = data.indicators.divergence;
+
+        const htfEl = document.getElementById("htf-val");
+        htfEl.innerText = data.indicators.htf_status;
+        htfEl.className = `text-[10px] px-1.5 py-0.5 rounded ${data.indicators.htf_trend === "Bullish" ? "text-green-400" : (data.indicators.htf_trend === "Bearish" ? "text-red-400" : "text-slate-400")}`;
+
+        document.getElementById("ai-val").innerText = data.indicators.ai_report.message;
+        document.getElementById("ensemble-score-raw").innerText = `Raw: ${data.indicators.ai_report.ensemble_score}`;
+
+        const indContainer = document.getElementById("ml-individual-results");
+        indContainer.innerHTML = '';
+        for (const [key, value] of Object.entries(data.indicators.ai_report.individual_results)) {
+            const color = value.score > 0 ? 'text-green-400' : (value.score < 0 ? 'text-red-400' : 'text-slate-400');
+            indContainer.innerHTML += `<div class="ml-detail-row"><span class="text-slate-400">${key}</span><span class="font-mono ${color}">${value.prob}% (${value.score})</span></div>`;
+        }
+    }
+
+    function applySkeleton(active) { ["price-val", "trend-val", "rsi-val", "tp-val", "sl-val", "lot-val", "news-val", "ai-val", "div-val", "regime-val"].forEach(id => document.getElementById(id).classList.toggle("skeleton", active)); }
+</script>
 </body>
 </html>
