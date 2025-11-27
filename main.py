@@ -14,25 +14,17 @@ from flask import Flask, request, jsonify, render_template
 # ---------------------------------------------------------
 # تنظیمات پایه
 # ---------------------------------------------------------
-# نادیده گرفتن هشدارهای مربوط به Pandas TA
 warnings.filterwarnings('ignore')
 app = Flask(__name__)
 
-# کلیدهای API: این کلیدها ابتدا از متغیرهای محیطی خوانده می‌شوند، 
-# اگر متغیر محیطی تنظیم نشده باشد، از مقادیر پیش‌فرض استفاده می‌شود.
-# توجه: در یک محیط واقعی، باید از کلیدهای معتبر استفاده کنید.
-API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "c15e9b87795a49aebc5b246e156b68bb") 
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
 API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
 
-# پارامترهای تحلیل و ML
 RISK_REWARD_ATR = 1.5
 TARGET_PERIODS = 5
 ML_CONFIDENCE_THRESHOLD = 1.0
 SIGNAL_SCORE_THRESHOLD = 5.0
 LSTM_TIME_STEPS = 10
-ML_SCORE_NORMALIZER = 4.0 # برای نرمال‌سازی امتیاز ML
-
-# نگاشت تایم‌فریم برای تحلیل‌های HTF
 TIMEFRAME_MAP = {
     "5min": "15min",
     "15min": "1h",
@@ -43,341 +35,584 @@ TIMEFRAME_MAP = {
     "1week": "1month",
     "1month": "1month"
 }
+ML_SCORE_NORMALIZER = 40.0
 
-# متغیرهای گلوبال شبیه‌سازی شده برای آمار مدل
-GLOBAL_TEST_ACCURACY = {}
-GLOBAL_RF_IMPORTANCES = {}
-GLOBAL_ML_MODELS = {}
+GLOBAL_RF_IMPORTANCES = {"RSI_14": 0.25, "ADX": 0.2, "EMA_Diff_Fast": 0.15}
+GLOBAL_TEST_ACCURACY = "N/A (Offline Training Required)"
 
 # ---------------------------------------------------------
-# توابع کمکی
+# مدل‌ها و متغیرهای lazy-load
 # ---------------------------------------------------------
+tf = None
+lstm_model = None
+rf_model = None
+lr_model = None
+xgb_model = None
+scaler = None
+GLOBAL_MODELS_LOADED = False
+MODELS_LOADING_ATTEMPTED = False  # جلوگیری از تلاش‌های مکرر
 
+# دیتابیس (اختیاری)
+database = None
+try:
+    import database
+except Exception:
+    database = None
+
+# ---------------------------------------------------------
+# توابع کمکی برای lazy loading مدل‌ها (اجباراً sync و محافظت‌شده)
+# ---------------------------------------------------------
+def ensure_models_loaded():
+    """
+    بارگذاری مدل‌ها به صورت lazy: فقط در اولین نیاز اجرا می‌شود.
+    تابع طوری نوشته شده که اگر مدل‌ها موجود نباشند یا بارگذاری با خطا مواجه شود،
+    اجرای اپ را متوقف نکند.
+    """
+    global tf, lstm_model, rf_model, lr_model, xgb_model, scaler, GLOBAL_MODELS_LOADED, MODELS_LOADING_ATTEMPTED
+
+    if GLOBAL_MODELS_LOADED or MODELS_LOADING_ATTEMPTED:
+        return
+
+    MODELS_LOADING_ATTEMPTED = True
+    try:
+        # بارگذاری TensorFlow به‌صورت محافظت‌شده (اگر نصب نباشد ادامه می‌دهیم)
+        try:
+            import tensorflow as _tf
+            tf = _tf
+            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+        except Exception:
+            tf = None
+
+        # اگر فایل‌های مدل موجود باشند، آنها را بارگذاری کن
+        models_dir = "models"
+        scaler_path = os.path.join(models_dir, "scaler.pkl")
+        rf_path = os.path.join(models_dir, "rf_model.pkl")
+        lr_path = os.path.join(models_dir, "lr_model.pkl")
+        xgb_path = os.path.join(models_dir, "xgb_model.pkl")
+        lstm_path = os.path.join(models_dir, "lstm_model.h5")
+
+        if os.path.exists(scaler_path):
+            try:
+                scaler = joblib.load(scaler_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load scaler: {e}")
+                scaler = None
+        if os.path.exists(rf_path):
+            try:
+                rf_model = joblib.load(rf_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load rf_model: {e}")
+                rf_model = None
+        if os.path.exists(lr_path):
+            try:
+                lr_model = joblib.load(lr_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load lr_model: {e}")
+                lr_model = None
+        if os.path.exists(xgb_path):
+            try:
+                xgb_model = joblib.load(xgb_path)
+            except Exception as e:
+                print(f"⚠️ Failed to load xgb_model: {e}")
+                xgb_model = None
+
+        if tf is not None and os.path.exists(lstm_path):
+            try:
+                # compile=False to reduce overhead
+                lstm_model = tf.keras.models.load_model(lstm_path, compile=False)
+            except Exception as e:
+                print(f"⚠️ Failed to load LSTM model: {e}")
+                lstm_model = None
+
+        # اگر دست‌کم یک مدل یا scaler لود شده باشد، پرچم را True کن
+        if scaler is not None or rf_model is not None or lr_model is not None or xgb_model is not None or lstm_model is not None:
+            GLOBAL_MODELS_LOADED = True
+            print("✅ Models loaded lazily.")
+        else:
+            print("⚠️ No models found or loading failed. Running in basic mode.")
+            GLOBAL_MODELS_LOADED = False
+
+    except Exception as e:
+        print(f"❌ Unexpected error during model loading: {e}")
+        GLOBAL_MODELS_LOADED = False
+
+# ---------------------------------------------------------
+# توابع تبدیل برای JSON
+# ---------------------------------------------------------
 def convert_to_serializable(obj):
-    """تبدیل اشیاء غیراستاندارد (مانند NumPy) به قالبی قابل سریال‌سازی (JSON)."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, np.generic):
-        return obj.item()
-    if isinstance(obj, dict):
-        return {k: convert_to_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [convert_to_serializable(i) for i in obj]
+    if isinstance(obj, (np.integer, int)): return int(obj)
+    if isinstance(obj, (np.floating, float)): return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, dict): return {k: convert_to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list): return [convert_to_serializable(i) for i in obj]
     return obj
 
-def check_api_keys():
-    """بررسی می‌کند که آیا کلیدهای API تنظیم شده‌اند."""
-    if not API_KEY_TWELVEDATA or not API_KEY_ALPHA:
-        return False, "لطفاً کلیدهای API را از طریق متغیرهای محیطی یا مستقیماً در فایل تنظیم کنید."
-    return True, ""
-
 # ---------------------------------------------------------
-# توابع بارگیری داده
+# دریافت کندل‌ها (sync, with yfinance fallback)
 # ---------------------------------------------------------
-
-def fetch_data_twelve_data(symbol, interval, outputsize=1000):
-    """بارگیری داده‌های کندل از Twelve Data."""
-    url = "https://api.twelvedata.com/time_series"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "apikey": API_KEY_TWELVEDATA,
-        "outputsize": outputsize,
-        "format": "json"
-    }
+def get_candles(symbol, interval, size=2000):
+    """
+    دریافت کندل‌ها:
+    - سعی می‌کند ابتدا از DB بخواند (اگر ماژول database موجود است)
+    - سپس از TwelveData بگیرد
+    - اگر TwelveData شکست خورد، fallback به yfinance
+    """
+    df_db = pd.DataFrame()
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
+        if database:
+            df_db = database.get_all_candles(symbol, interval)
+    except Exception:
+        df_db = pd.DataFrame()
+
+    # اگر DB داده داشت از اندازهٔ کمتری درخواست بده
+    req_size = 500 if not df_db.empty else size
+    df_new = pd.DataFrame()
+
+    # TwelveData
+    try:
+        api_symbol = symbol.replace("/", "")
+        url = f"https://api.twelvedata.com/time_series?symbol={api_symbol}&interval={interval}&apikey={API_KEY_TWELVEDATA}&outputsize={req_size}"
+        response = requests.get(url, timeout=5)
         data = response.json()
-
-        if 'values' not in data or not data['values']:
-            return None, f"Twelve Data: داده‌ای برای نماد {symbol} و بازه زمانی {interval} یافت نشد یا خطا: {data.get('message', 'نامشخص')}"
-
-        df = pd.DataFrame(data['values'])
-        df = df.rename(columns={'datetime': 'time', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
-        df['time'] = pd.to_datetime(df['time'])
-        df = df.set_index('time')
-        
-        # تبدیل ستون‌های قیمت به عدد
-        for col in ['Open', 'High', 'Low', 'Close']:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # اصلاح کلیدی: مدیریت امن ستون Volume
-        if 'Volume' in df.columns:
-            df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0.0)
-        else:
-            # اگر ستون Volume وجود نداشت، آن را با صفر پر می‌کنیم تا اندیکاتورهای Volume-based دچار خطا نشوند
-            df['Volume'] = 0.0 
-            
-        df = df.dropna()
-        return df, None
-    except requests.exceptions.HTTPError as e:
-        # اگر کلید API نامعتبر باشد
-        return None, f"Twelve Data HTTP Error: {e}. (لطفاً کلید API را بررسی کنید)"
+        if "values" in data and data["values"]:
+            df_new = pd.DataFrame(data["values"])
+            cols = ['open', 'high', 'low', 'close', 'volume']
+            for c in cols:
+                if c in df_new.columns:
+                    df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
+            df_new['datetime'] = pd.to_datetime(df_new['datetime'])
+            df_new = df_new.dropna().iloc[::-1].reset_index(drop=True)
+            try:
+                if database:
+                    database.save_candles(df_new, symbol, interval)
+            except Exception:
+                pass
     except Exception as e:
-        return None, f"Twelve Data General Error: {str(e)}"
+        print(f"⚠️ TwelveData Error: {e}")
+
+    # YFinance fallback (only if TwelveData returned nothing)
+    if df_new.empty:
+        try:
+            if "BTC" in symbol:
+                yf_symbol = "BTC-USD"
+            elif "XAU" in symbol:
+                yf_symbol = "GC=F"
+            elif "EUR" in symbol:
+                yf_symbol = "EURUSD=X"
+            elif "GBP" in symbol:
+                yf_symbol = "GBPUSD=X"
+            elif "JPY" in symbol:
+                yf_symbol = "JPY=X"
+            else:
+                yf_symbol = symbol.replace("/", "") + "=X"
+
+            yf_int = "1h"
+            if interval == "5min": yf_int = "5m"
+            elif interval == "15min": yf_int = "15m"
+            elif interval == "30min": yf_int = "30m"
+            elif interval == "1h": yf_int = "1h"
+            elif interval == "4h": yf_int = "1h"
+            elif interval == "1day": yf_int = "1d"
+            elif interval == "1week": yf_int = "1wk"
+            elif interval == "1month": yf_int = "1mo"
+
+            period = "1mo"
+            if interval in ["5min", "15min", "30min"]:
+                period = "5d"
+            elif interval in ["1day"]:
+                period = "2y"
+            elif interval in ["1week", "1month"]:
+                period = "5y"
+
+            df_yf = yf.download(yf_symbol, period=period, interval=yf_int, progress=False)
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                if isinstance(df_yf.columns, pd.MultiIndex):
+                    df_yf.columns = df_yf.columns.get_level_values(0)
+                rename_map = {'Date': 'datetime', 'Datetime': 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}
+                df_yf.rename(columns=rename_map, inplace=True)
+                if 'datetime' in df_yf.columns:
+                    df_yf['datetime'] = pd.to_datetime(df_yf['datetime']).dt.tz_localize(None)
+                req_cols = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+                df_new = df_yf[[c for c in req_cols if c in df_yf.columns]].dropna()
+                for c in ['open', 'high', 'low', 'close', 'volume']:
+                    if c in df_new.columns:
+                        df_new[c] = pd.to_numeric(df_new[c], errors='coerce')
+                try:
+                    if database:
+                        database.save_candles(df_new, symbol, interval)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"❌ YFinance Error: {e}")
+
+    # ادغام داده‌های DB و API
+    df_final = pd.DataFrame()
+    if not df_db.empty and not df_new.empty:
+        df_final = pd.concat([df_db, df_new])
+    elif not df_db.empty:
+        df_final = df_db
+    elif not df_new.empty:
+        df_final = df_new
+
+    if not df_final.empty:
+        df_final['datetime'] = pd.to_datetime(df_final['datetime'])
+        df_final = df_final.drop_duplicates(subset=['datetime'], keep='last')
+        df_final = df_final.sort_values(by='datetime').reset_index(drop=True)
+        cols = ['open', 'high', 'low', 'close', 'volume']
+        for c in cols:
+            if c in df_final.columns:
+                df_final[c] = pd.to_numeric(df_final[c], errors='coerce')
+        return df_final.dropna(subset=['close']).tail(size).reset_index(drop=True)
+
+    return None
 
 # ---------------------------------------------------------
-# توابع تحلیل و اندیکاتور
+# پردازش داده‌ها و اندیکاتورها
 # ---------------------------------------------------------
+def process_data(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    try:
+        cols = ['open', 'high', 'low', 'close', 'volume']
+        for c in cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
 
-def calculate_indicators(df):
-    """محاسبه مجموعه‌ای از اندیکاتورها با استفاده از pandas_ta."""
-    
-    # اطمینان از وجود داده کافی
-    if len(df) < 50: # حداقل 50 کندل برای اندیکاتورهایی مانند SMA(50)
-         return pd.DataFrame()
-         
-    # مومنتوم و نوسان
-    df.ta.rsi(append=True) # RSI_14
-    df.ta.stoch(append=True) # STOCHk_14_3_3, STOCHd_14_3_3
-    df.ta.macd(append=True) # MACD_12_26_9, MACDh_12_26_9, MACDs_12_26_9
+        if len(df) < 60:
+            return df
 
-    # نوسان و قیمت
-    df.ta.atr(append=True) # ATR_14
-    df.ta.bbands(append=True) # BBL, BBU, BB_M, ...
-    df.ta.donchian(append=True) # DCL_20, DCU_20, DCM_20
+        # اندیکاتورها
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=100, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.rsi(length=6, append=True)
+        df.ta.atr(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.ta.macd(append=True)
+        df.ta.donchian(lower_length=20, upper_length=20, append=True)
 
-    # روند و استحکام
-    df.ta.adx(append=True) # ADX_14, DIp_14, DIm_14
-    df.ta.ema(length=20, append=True) # EMA_20
-    df.ta.sma(length=50, append=True) # SMA_50
-    
-    # حالت بازار
-    df.ta.regime(append=True) # شناسایی حالت بازار (روند یا رنج)
+        # ویژگی‌های تکمیلی
+        df.ta.stoch(k=14, d=3, append=True)
+        df.ta.mfi(length=14, append=True)
+        df.ta.supertrend(length=10, multiplier=3.0, append=True)
 
-    df = df.dropna()
-    return df
-
-def detect_divergence(df):
-    """شناسایی واگرایی‌های ساده بر اساس RSI و قیمت."""
-    if len(df) < 20:
-        return "Not Enough Data"
-    
-    # واگرایی معمولی صعودی (Bullish Regular Divergence)
-    # قیمت کف پایین‌تر، RSI کف بالاتر
-    
-    # بررسی چند کندل آخر برای تعیین کف‌ها (مثلاً 5 کندل)
-    price_lows = df['Low'].iloc[-5:]
-    rsi_lows = df['RSI_14'].iloc[-5:]
-    
-    # اگر کف جدید قیمت پایین‌تر از کف قبلی باشد و RSI نتوانسته باشد کف پایین‌تر ثبت کند
-    # این فقط یک شبیه‌سازی ساده است و نیاز به تحلیل عمیق‌تر دارد.
-    if price_lows.min() < price_lows.iloc[-2] and rsi_lows.idxmin() > rsi_lows.index[-2]:
-        return "Bullish Regular Divergence (Simple)"
-
-    # واگرایی معمولی نزولی (Bearish Regular Divergence)
-    # قیمت سقف بالاتر، RSI سقف پایین‌تر
-    price_highs = df['High'].iloc[-5:]
-    rsi_highs = df['RSI_14'].iloc[-5:]
-
-    # اگر سقف جدید قیمت بالاتر از سقف قبلی باشد و RSI نتوانسته باشد سقف بالاتر ثبت کند
-    if price_highs.max() > price_highs.iloc[-2] and rsi_highs.idxmax() < rsi_highs.index[-2]:
-        return "Bearish Regular Divergence (Simple)"
-
-    return "No Clear Divergence"
-
-# ---------------------------------------------------------
-# توابع مدل یادگیری ماشین
-# ---------------------------------------------------------
-
-def generate_features_for_ml(df):
-    """ایجاد ویژگی‌ها برای مدل ML از اندیکاتورها."""
-    features = pd.DataFrame(index=df.index)
-    
-    # ویژگی‌های مومنتوم
-    features['RSI'] = df['RSI_14']
-    features['MACD'] = df['MACDh_12_26_9']
-    features['Stoch_K'] = df['STOCHk_14_3_3']
-    
-    # ویژگی‌های روند
-    features['ADX'] = df['ADX_14']
-    features['Close_to_EMA'] = (df['Close'] - df['EMA_20']) / df['Close']
-    features['Close_to_SMA'] = (df['Close'] - df['SMA_50']) / df['Close']
-    features['Regime'] = df['Regime'] # حالت بازار
-
-    # ویژگی‌های نوسان
-    features['BB_Width'] = (df['BBU_5_2.0'] - df['BBL_5_2.0']) / df['BB_5_2.0']
-    features['Donchian_Mid'] = df['DCM_20']
-    features['Close_to_Donchian'] = (df['Close'] - features['Donchian_Mid']) / df['Close']
-    
-    # ویژگی‌های تغییرات اخیر (Rate of Change)
-    features['RSI_ROC'] = df['RSI_14'].diff()
-    features['Close_ROC'] = df['Close'].diff()
-    # استفاده از fillna(0) در اینجا برای اطمینان از ایمنی در برابر نمادهایی که Volume ندارند
-    features['Volume_ROC'] = df['Volume'].fillna(0).diff()
-
-    # حذف سطر‌هایی که NaN دارند
-    features = features.dropna()
-    return features
-
-def load_and_predict(features, symbol, timeframe):
-    """بارگیری مدل ML و تولید پیش‌بینی (در این دمو شبیه‌سازی شده)."""
-    global GLOBAL_ML_MODELS
-    
-    model_key = f"{symbol}_{timeframe}"
-    if model_key not in GLOBAL_ML_MODELS:
-        # شبیه‌سازی بارگیری مدل: در یک محیط واقعی، از joblib.load یا بارگیری مدل Keras/PyTorch استفاده می‌کنید
-        GLOBAL_ML_MODELS[model_key] = "MockModel" # شبیه‌سازی بارگیری موفق
-
-    if GLOBAL_ML_MODELS[model_key] == "MockModel":
-        # شبیه‌سازی تولید گزارش ML
-        import random
-        random.seed(int(time.time()))
-        
-        # امتیاز نهایی (بین -100 تا 100)
-        ensemble_score = round(random.uniform(-75, 75), 2)
-        
-        # پیام توصیه‌ای
-        if ensemble_score > 40:
-            message = "قوی صعودی - حرکت قوی محتمل است."
-        elif ensemble_score > 10:
-            message = "صعودی - فضا برای رشد وجود دارد."
-        elif ensemble_score < -40:
-            message = "قوی نزولی - فشار فروش بالا."
-        elif ensemble_score < -10:
-            message = "نزولی - احتمال کاهش قیمت."
+        if 'ATRr_14' in df.columns:
+            df['ATR_14'] = df['ATRr_14']
+        if 'ADX_14' not in df.columns and 'ADX' in df.columns:
+            df['ADX_14'] = df['ADX']
+        if 'STOCHk_14_3_3' in df.columns:
+            df['STOCH_K'] = df['STOCHk_14_3_3']
         else:
-            message = "خنثی - تثبیت در محدوده قیمت."
-
-        # نتایج مدل‌های فردی (شبیه‌سازی)
-        individual_results = {
-            "LSTM": {"score": round(random.uniform(-10, 10), 1), "prob": random.randint(55, 95)},
-            "RandomForest": {"score": round(random.uniform(-10, 10), 1), "prob": random.randint(55, 95)},
-            "SVC": {"score": round(random.uniform(-10, 10), 1), "prob": random.randint(55, 95)},
-            "CNN": {"score": round(random.uniform(-10, 10), 1), "prob": random.randint(55, 95)},
-        }
-        
-        # شبیه‌سازی دقت و اهمیت ویژگی‌ها
-        global GLOBAL_TEST_ACCURACY, GLOBAL_RF_IMPORTANCES
-        if not GLOBAL_TEST_ACCURACY:
-             GLOBAL_TEST_ACCURACY = {"LSTM": 75.3, "RF": 82.1, "SVC": 78.8, "CNN": 80.5}
-             GLOBAL_RF_IMPORTANCES = {"RSI": 0.2, "MACD": 0.15, "Close_to_EMA": 0.3, "ADX": 0.05, "BB_Width": 0.1, "Others": 0.2}
-
-        return {
-            "message": message,
-            "ensemble_score": ensemble_score,
-            "individual_results": individual_results,
-            "accuracy": GLOBAL_TEST_ACCURACY,
-            "importances": GLOBAL_RF_IMPORTANCES
-        }
-
-    return {"message": "Model not ready.", "ensemble_score": 0, "individual_results": {}, "accuracy": {}, "importances": {}}
-
-
-def check_higher_timeframe(symbol, current_timeframe):
-    """بررسی روند در تایم فریم بالاتر (HTF)."""
-    htf = TIMEFRAME_MAP.get(current_timeframe)
-    if not htf:
-        return "N/A", "N/A"
-
-    df_htf, error = fetch_data_twelve_data(symbol, htf)
-    if error:
-        return "Error", f"HTF Data Error: {error}"
-
-    df_htf = calculate_indicators(df_htf)
-    if df_htf.empty:
-        return "Neutral", "Not enough HTF data for reliable analysis."
-
-    last = df_htf.iloc[-1]
-    
-    # تعیین روند بر اساس EMA و ADX/DIs
-    ema_col = f'EMA_{20}'
-    adx_col = f'ADX_14'
-    dipi = f'DIp_14'
-    dimi = f'DIm_14'
-
-    trend = "Neutral"
-    status = f"ADX: {round(last.get(adx_col, 0), 2)}"
-
-    # بررسی روند بر اساس EMA
-    if last.get(ema_col) is not None:
-        if last['Close'] > last[ema_col]:
-            trend = "Bullish"
-        elif last['Close'] < last[ema_col]:
-            trend = "Bearish"
-
-    # بررسی استحکام روند بر اساس ADX
-    if last.get(adx_col, 0) > 25:
-        if last.get(dipi, 0) > last.get(dimi, 0):
-            trend = "Strong Bullish"
-            status = f"Strong Trend (ADX>25, +DI > -DI)"
+            df['STOCH_K'] = 0
+        if 'SUPERTd_10_3.0' in df.columns:
+            df['SUPERT_D'] = df['SUPERTd_10_3.0']
         else:
-            trend = "Strong Bearish"
-            status = f"Strong Trend (ADX>25, -DI > +DI)"
-    
-    return trend, status
+            df['SUPERT_D'] = 0
+        if 'MFI_14' not in df.columns:
+            df['MFI_14'] = 0
+
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+
+        df['DCL'] = df.get('DCL_20_20', df['low'])
+        df['DCU'] = df.get('DCU_20_20', df['high'])
+        df['Returns'] = df['close'].pct_change().fillna(0)
+        df['Volatility'] = np.where(df['close'] != 0, (df['high'] - df['low']) / df['close'], 0)
+        df['EMA_Diff_Fast'] = np.where(df['close'] != 0, (df.get('EMA_20', df['close']) - df.get('EMA_50', df['close'])) / df['close'], 0)
+        df['EMA_Diff_Slow'] = np.where(df['close'] != 0, (df.get('EMA_50', df['close']) - df.get('EMA_100', df['close'])) / df['close'], 0)
+        df['Hour'] = df['datetime'].dt.hour
+        df['DayOfWeek'] = df['datetime'].dt.dayofweek
+        df['HV_20'] = df['Returns'].rolling(20).std().fillna(0)
+
+        return df.reset_index(drop=True)
+    except Exception as e:
+        traceback.print_exc()
+        return df
 
 # ---------------------------------------------------------
-# روترها (Routes)
+# ML: wrapper that uses ensure_models_loaded() then predicts
 # ---------------------------------------------------------
-
-@app.route("/")
-def index():
-    """نمایش صفحه اصلی (واسط کاربری)."""
-    return render_template('index.html')
-
-@app.route("/analyze", methods=["POST"])
-def analyze_route():
-    """نقطه پایانی برای دریافت تحلیل."""
-    
-    is_ready, error_msg = check_api_keys()
-    if not is_ready:
-        return jsonify({"error": error_msg}), 400
+def get_ml_prediction(df):
+    """
+    wrapper sync for ML prediction. Calls ensure_models_loaded() on demand.
+    Returns (ml_score, report) similar to original.
+    """
+    ensure_models_loaded()
+    report = {"ensemble_score": 0, "message": "AI: داده ناکافی", "individual_results": {}, "ml_score_final": 0}
+    if not GLOBAL_MODELS_LOADED or len(df) < 5:
+        return 0, report
 
     try:
-        data = request.get_json()
-        symbol = data.get("symbol", "BTC/USD")
-        timeframe = data.get("timeframe", "1h")
+        feature_cols = [
+            'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow',
+            'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
+            'MFI_14', 'STOCH_K', 'SUPERT_D'
+        ]
 
-        # 1. دریافت داده
-        df, error = fetch_data_twelve_data(symbol, timeframe)
-        if error:
-            return jsonify({"error": error}), 400
-        
-        # 2. محاسبه اندیکاتورها
-        df = calculate_indicators(df)
+        for col in feature_cols:
+            if col not in df.columns:
+                df[col] = 0
+
+        last_row = df.iloc[-1][feature_cols].to_frame().T
+        if scaler is None:
+            return 0, report
+        input_scaled = scaler.transform(last_row)
+        score_sum = 0
+        count = 0
+
+        for name, model in [('RF', rf_model), ('LR', lr_model), ('XGB', xgb_model)]:
+            if model is not None:
+                try:
+                    p = model.predict_proba(input_scaled)[0][1]
+                    s = (p - 0.5) * 100
+                    score_sum += s
+                    count += 1
+                    report["individual_results"][name] = {"prob": round(p * 100, 1), "score": round(s, 1)}
+                except Exception:
+                    pass
+
+        if lstm_model is not None and len(df) >= LSTM_TIME_STEPS:
+            try:
+                seq = df.iloc[len(df) - LSTM_TIME_STEPS:][feature_cols]
+                seq_scaled = scaler.transform(seq).reshape(1, LSTM_TIME_STEPS, len(feature_cols))
+                p = float(lstm_model.predict(seq_scaled, verbose=0)[0][0])
+                s = (p - 0.5) * 100
+                score_sum += s
+                count += 1
+                report["individual_results"]["LSTM"] = {"prob": round(p * 100, 1), "score": round(s, 1)}
+            except Exception:
+                pass
+
+        if count > 0:
+            final_score = score_sum / count
+            report["ensemble_score"] = round(score_sum, 1)
+            report["ml_score_final"] = round(np.clip(final_score / 5.0, -10, 10), 1)
+            direction = "Bullish 🟢" if final_score > 5 else ("Bearish 🔴" if final_score < -5 else "Neutral ⚪")
+            report["message"] = f"AI: {direction}"
+            return report["ml_score_final"], report
+
+    except Exception as e:
+        print(f"❌ AI Prediction Error: {e}")
+
+    return 0, report
+
+# ---------------------------------------------------------
+# توابع کمکی دیگر (sentiment, divergence, position size)
+# ---------------------------------------------------------
+def get_sentiment(symbol):
+    try:
+        av_symbol = "FOREX:" + symbol.replace("/", "")
+        if "BTC" in symbol:
+            av_symbol = "CRYPTO:BTC"
+        elif "XAU" in symbol:
+            av_symbol = "FOREX:XAUUSD"
+        url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={av_symbol}&apikey={API_KEY_ALPHA}&limit=1"
+        r = requests.get(url, timeout=3)
+        data = r.json()
+        if "feed" in data and data["feed"]:
+            item = data["feed"][0]
+            score = float(item.get("overall_sentiment_score", 0))
+            label = item.get("overall_sentiment_label", "Neutral")
+            return score * 2, f"{label} ({score})"
+    except Exception:
+        pass
+    return 0, "No News"
+
+def check_divergence(df):
+    if len(df) < 20:
+        return 0, "---"
+    try:
+        price = df['close'].values
+        rsi = df['RSI_14'].values
+        prev_max_idx = np.argmax(price[-20:-5]) + (len(price) - 20)
+        if price[-1] > price[prev_max_idx] and rsi[-1] < rsi[prev_max_idx]:
+            return -3, "Bearish Div 📉"
+        prev_min_idx = np.argmin(price[-20:-5]) + (len(price) - 20)
+        if price[-1] < price[prev_min_idx] and rsi[-1] > rsi[prev_min_idx]:
+            return 3, "Bullish Div 📈"
+        return 0, "No Divergence"
+    except Exception:
+        return 0, "---"
+
+def calculate_position_size(balance, risk_pct, sl_pips, symbol):
+    try:
+        if sl_pips <= 0:
+            return 0
+        risk_amount = balance * (risk_pct / 100)
+        pip_value_per_lot = 10
+        if "JPY" in symbol:
+            pip_value_per_lot = 1000 / 110
+        if "BTC" in symbol:
+            return round(risk_amount / sl_pips, 4)
+        if "XAU" in symbol:
+            pip_value_per_lot = 100
+        return round(risk_amount / (sl_pips * pip_value_per_lot), 2)
+    except Exception:
+        return 0
+
+# ---------------------------------------------------------
+# مسیرهای Flask (sync)
+# ---------------------------------------------------------
+@app.route("/")
+def index_route():
+    # اگر قالب index.html موجود نیست، حداقل یک متن ساده برگردان
+    try:
+        return render_template("index.html")
+    except Exception:
+        tf_status = "✅ Loaded" if tf else "❌ Disabled"
+        db_status = "✅ Loaded" if database else "❌ Disabled"
+        return f"""
+        <h1>Crypto Analysis Service Running (Optimized)!</h1>
+        <p>ML models loaded: {'Yes' if GLOBAL_MODELS_LOADED else 'No (Running in Basic Mode)'}</p>
+        <p>TensorFlow Status: {tf_status}</p>
+        <p>Database Status: {db_status}</p>
+        <p>Check /analyze?symbol=EUR/USD&interval=1h (POST or GET)</p>
+        """
+
+@app.route("/analyze", methods=["GET", "POST"])
+def analyze_route():
+    """
+    Endpoint اصلی: هم GET پارامتری و هم POST JSON را می‌پذیرد.
+    این تابع نکتهٔ مهم: قبل از فراخوانی ML، اطمینان می‌دهد که مدل‌ها lazy-load شده‌اند.
+    """
+    try:
+        # پارسنگ ورودی
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+        else:
+            data = request.args.to_dict()
+
+        symbol = data.get("symbol", "EUR/USD")
+        interval = data.get("interval", "1h")
+        use_htf = str(data.get("use_htf", "false")).lower() == "true"
+        size = int(data.get("size", 1000))
+
+        # پارامترهای trade
+        balance = float(data.get("balance", 1000))
+        risk_pct = float(data.get("risk", 1.0))
+        rr_ratio = float(data.get("rr", 1.5))
+        sl_type = data.get("sl_type", "static")
+
+        # دریافت کندل‌ها (sync)
+        df = get_candles(symbol, interval, size)
+
+        if df is None or len(df) < 60:
+            return jsonify({"error": "Not enough data (Min 60 candles)."}), 500
+
+        df = process_data(df)
         if df.empty:
-            return jsonify({"error": "Failed to calculate indicators (Not enough clean data)."}), 400
+            return jsonify({"error": "Processing failed."}), 500
 
-        # 3. بررسی تایم فریم بالاتر
-        htf_trend, htf_status = check_higher_timeframe(symbol, timeframe)
-        
-        # 4. آماده‌سازی ویژگی‌ها و پیش‌بینی ML
-        features = generate_features_for_ml(df)
-        if features.empty:
-             return jsonify({"error": "Failed to generate ML features (Not enough clean data)."}), 400
-
-        ml_report = load_and_predict(features, symbol, timeframe)
-        
-        # 5. تحلیل و جمع‌بندی
         last = df.iloc[-1]
-        div_msg = detect_divergence(df)
+        ml_score, ml_report = get_ml_prediction(df)
+        score = ml_score
+
+        trend = "Uptrend" if last.get('EMA_20', 0) > last.get('EMA_50', 0) else "Downtrend"
+        rsi = last.get('RSI_14', 50)
+        adx = last.get('ADX_14', 0)
+        supert_d = last.get('SUPERT_D', 0)
+
+        if trend == "Uptrend":
+            score += 1
+        else:
+            score -= 1
+        if rsi < 30:
+            score += 2
+        elif rsi > 70:
+            score -= 2
+        if adx > 25:
+            score *= 1.2
+        if supert_d == 1:
+            score += 1.5
+        elif supert_d == -1:
+            score -= 1.5
+
+        news_score, news_msg = get_sentiment(symbol)
+        score += news_score
+        div_score, div_msg = check_divergence(df)
+        score += div_score
+
+        htf_status = "Inactive"
+        htf_trend = "N/A"
+        if use_htf and interval in TIMEFRAME_MAP:
+            htf_int = TIMEFRAME_MAP[interval]
+            df_htf = get_candles(symbol, htf_int, 200)
+            if df_htf is not None:
+                df_htf = process_data(df_htf)
+                if not df_htf.empty:
+                    htf_last = df_htf.iloc[-1]
+                    htf_trend = "Bullish" if htf_last.get('EMA_20', 0) > htf_last.get('EMA_50', 0) else "Bearish"
+                    htf_status = f"Active: {htf_trend} ({htf_int})"
+                    if (htf_trend == "Bullish" and trend == "Uptrend") or (htf_trend == "Bearish" and trend == "Downtrend"):
+                        score += 2
+                    else:
+                        score -= 2
+
+        signal = "neutral"
+        if score >= SIGNAL_SCORE_THRESHOLD:
+            signal = "buy"
+        elif score <= -SIGNAL_SCORE_THRESHOLD:
+            signal = "sell"
+
+        price = float(last['close'])
+        atr = float(last.get('ATR_14', 0))
+        sl, tp = 0, 0
+        if signal != 'neutral' and atr > 0:
+            if signal == 'buy':
+                if sl_type == "dynamic":
+                    supp = last.get('SUPERT_10_3.0') if last.get('SUPERT_D') == 1 else last.get('EMA_50')
+                    sl = supp if supp < price else price - (2 * atr)
+                else:
+                    sl = max(last.get('DCL', 0), price - (2 * atr))
+                dist = price - sl
+                tp = price + (dist * rr_ratio)
+            elif signal == 'sell':
+                if sl_type == "dynamic":
+                    res = last.get('SUPERT_10_3.0') if last.get('SUPERT_D') == -1 else last.get('EMA_50')
+                    sl = res if res > price else price + (2 * atr)
+                else:
+                    sl = min(last.get('DCU', 0), price + (2 * atr))
+                dist = sl - price
+                tp = price - (dist * rr_ratio)
+
+        sl = round(sl, 5)
+        tp = round(tp, 5)
+
+        lot_size = 0
+        if sl > 0:
+            dist_pips = abs(price - sl)
+            if "JPY" not in symbol:
+                dist_pips *= 10000
+            else:
+                dist_pips *= 100
+            lot_size = calculate_position_size(balance, risk_pct, dist_pips, symbol)
 
         response = {
             "symbol": symbol,
-            "timeframe": timeframe,
-            "last_close": round(last['Close'], 2),
+            "price": price,
+            "signal": signal,
+            "score": round(score, 1),
+            "setup": {
+                "sl": sl,
+                "tp": tp,
+                "lot_size": lot_size,
+                "risk_amt": round(balance * (risk_pct / 100), 2)
+            },
             "indicators": {
-                "htf_trend": htf_trend,
+                "rsi": round(rsi, 1),
+                "trend": trend,
+                "macd": "Bullish" if last.get('MACD_12_26_9', 0) > last.get('MACDs_12_26_9', 0) else "Bearish",
+                "adx": round(adx, 1),
+                "regime": "Trending" if adx > 25 else "Ranging",
+                "news": news_msg,
                 "htf_status": htf_status,
-                "rsi": round(last.get('RSI_14', 0), 2),
-                # نمایش ADX و DIs
-                "adx": f"ADX: {round(last.get('ADX_14', 0), 2)} | +DI: {round(last.get('DIp_14', 0), 2)} | -DI: {round(last.get('DIm_14', 0), 2)}",
-                # نمایش MACD و هیستوگرام (H)
-                "macd": f"MACD: {round(last.get('MACD_12_26_9', 0), 4)} | H: {round(last.get('MACDh_12_26_9', 0), 4)}",
-                # نمایش استوکاستیک K و D
-                "stoch": f"K: {round(last.get('STOCHk_14_3_3', 0), 2)} | D: {round(last.get('STOCHd_14_3_3', 0), 2)}",
-                # نمایش باندهای بولینگر (بالا، میانی، پایین)
-                "bbands": f"U: {round(last.get('BBU_5_2.0', 0), 2)} | M: {round(last.get('BB_5_2.0', 0), 2)} | L: {round(last.get('BBL_5_2.0', 0), 2)}",
-                "atr": round(last.get('ATR_14', 0), 4),
-                "regime": f"Regime: {last.get('Regime', 'N/A')}",
-                # نمایش کانال دانچین (پایین، بالا)
-                "donchian": f"L: {round(last.get('DCL_20', 0), 4)} | R: {round(last.get('DCU_20', 0), 4)}",
+                "htf_trend": htf_trend,
+                "sr_levels": f"S: {round(last.get('DCL', 0), 4)} | R: {round(last.get('DCU', 0), 4)}",
                 "divergence": div_msg,
                 "ai_report": {
                     "message": ml_report.get("message"),
-                    "ensemble_score": ml_report.get("ensemble_score"), 
+                    "ml_score_final": ml_report.get("ml_score_final"),
                     "individual_results": ml_report.get("individual_results"),
                     "accuracy": GLOBAL_TEST_ACCURACY,
                     "importances": GLOBAL_RF_IMPORTANCES
@@ -397,8 +632,7 @@ def analyze_route():
         return jsonify(convert_to_serializable(response))
 
     except Exception as e:
-        # چاپ کامل جزئیات خطا برای دیباگ کردن
-        traceback.print_exc() 
+        traceback.print_exc()
         return jsonify({"error": f"Server Error: {str(e)}"}), 500
 
 @app.route("/backtest", methods=["GET"])
@@ -412,8 +646,7 @@ def optimize_route():
 # ---------------------------------------------------------
 # entrypoint
 # ---------------------------------------------------------
-if __name__ == '__main__':
-    # این خط را در محیطی که از متغیر محیطی برای پورت استفاده می‌شود، حفظ کنید
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
-
+if __name__ == "__main__":
+    # مهم: debug=False برای اجرا در Gunicorn/Railway
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
