@@ -14,200 +14,322 @@ from sklearn.metrics import accuracy_score
 import warnings
 import math
 
+# غیرفعال کردن هشدارهای غیرمهم
 warnings.filterwarnings("ignore")
 
-# ==========================================
-# ⚙️ تنظیمات (Config)
-# ==========================================
-USE_LSTM = True   
-TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
-SYMBOL_MAP = {"EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "XAUUSD": "XAU/USD", "BTCUSD": "BTC/USD"}
-SYMBOLS = list(SYMBOL_MAP.keys())
-# 🛑 مقدار دهی مجدد برای رفع خطای API: 200 روز داده 1h تا از حد مجاز 5000 کندل عبور نکند.
-TOTAL_DAYS = 200 
+# -------------------------
+# بررسی نصب بودن کتابخانه Twelve Data
+# -------------------------
+try:
+    from twelvedata import TDClient
+    print("✅ TDClient imported successfully.")
+except ImportError:
+    raise SystemExit("❌ Library 'twelvedata' not found. Please run: pip install twelvedata")
+
+# -------------------------
+# تنظیمات برنامه
+# -------------------------
+SYMBOL_MAP = {
+    "EURUSD": "EUR/USD",
+    "GBPUSD": "GBP/USD",
+    "USDJPY": "USD/JPY",
+    "XAUUSD": "XAU/USD",
+    "BTCUSD": "BTC/USD"
+}
+SYMBOLS = list(SYMBOL_MAP.keys()) 
+INTERVAL = "1h"
+# 🛑 مقدار 650 روز مناسب است، چون گارد 5000 کندل جلوی خطا را می‌گیرد
+TOTAL_DAYS = 650 
 TIME_STEPS = 10
+# 🛑 ما از تقسیم‌بندی زمانی (Walk-Forward) استفاده خواهیم کرد، نه Shuffle
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
+USE_LSTM = True # از LSTM استفاده شود
 
+# ==========================================
+# 🔑👇 کلید API خود را دقیقاً در خط زیر قرار دهید 👇🔑
+# ==========================================
+TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
+
+# اتصال به کلاینت
 td = None
-try:
-    if TD_API_KEY: td = TDClient(apikey=TD_API_KEY)
-except: pass
-
-# ==========================================
-# 📥 توابع دانلود و مهندسی ویژگی
-# ==========================================
-def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
-    if not td: return pd.DataFrame()
-    td_symbol = SYMBOL_MAP.get(symbol_key, symbol_key)
-    print(f"⏳ Downloading {td_symbol}...")
+if TD_API_KEY and "API_KEY" not in TD_API_KEY:
     try:
-        output_size = days * 24 
-        if output_size > 5000: 
-            output_size = 5000 
-            print("⚠️ Output size capped at 5000 candles due to API limit.")
-        
+        td = TDClient(apikey=TD_API_KEY)
+    except Exception as e:
+        print(f"⚠️ Error initializing TDClient: {e}")
+else:
+    print("⚠️ هشدار: کلید API معتبر نیست.")
+
+# -------------------------
+# تابع دانلود داده (با گارد API و Volume)
+# -------------------------
+def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
+    td_symbol = SYMBOL_MAP.get(symbol_key, symbol_key)
+    
+    if td is None:
+        print(f"❌ TD API Key is invalid.")
+        return pd.DataFrame()
+
+    print(f"⏳ (TD) Downloading {td_symbol}...")
+    # 🛑 گارد API: فقط 5000 کندل درخواست می‌شود
+    output_size = min(days * 24, 5000) 
+    
+    try:
         ts = td.time_series(
-            symbol=td_symbol, 
-            interval=interval, 
-            outputsize=output_size, 
+            symbol=td_symbol,
+            interval=interval,
+            outputsize=output_size,
             timezone="Exchange"
         ).as_json()
         
-        if not ts or len(ts) < 100: return pd.DataFrame()
-        df = pd.DataFrame(ts).rename(columns=str.lower)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        
-        # 🛑 اصلاح نهایی: مطمئن شدن از وجود ستون 'volume' قبل از استفاده
+        if not ts or len(ts) < 50:
+             print(f"⚠️ Insufficient data for {td_symbol}.")
+             return pd.DataFrame()
+
+        df = pd.DataFrame(ts)
+        df = df.rename(columns={c: c.lower() for c in df.columns})
+
+        # 🛑 گارد Volume (از فایل شما)
         if 'volume' not in df.columns:
-             df['volume'] = 0 # اگر حجم نبود، ستون را با صفر پر کن
-             
-        for c in ['open','high','low','close','volume']: df[c] = pd.to_numeric(df[c], errors='coerce')
-        return df.sort_values('datetime').reset_index(drop=True)
+            df['volume'] = 0.0
+        
+        if 'datetime' in df.columns:
+            df['datetime'] = pd.to_datetime(df['datetime'])
+        else:
+            return pd.DataFrame()
+
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            else:
+                df[col] = 0.0 
+
+        df = df.sort_values('datetime').reset_index(drop=True)
+        return df[['datetime','open','high','low','close','volume']]
+        
     except Exception as e:
-        print(f"❌ Error {td_symbol}: {e}")
+        print(f"⚠️ Download failed for {td_symbol}. Error: {e}")
         return pd.DataFrame()
 
-def process_data(df):
-    if len(df) < 100: return pd.DataFrame()
+# -------------------------
+# تابع محاسبه اندیکاتورها 
+# -------------------------
+def calculate_indicators_and_target(df):
+    if len(df) < 50: return pd.DataFrame()
     df = df.copy()
-    
-    # Feature Engineering (Lag & Time features)
+
     df['Returns'] = df['close'].pct_change()
-    df['Log_Returns'] = np.log(df['close'] / df['close'].shift(1))
+    
     df.ta.ema(length=20, append=True)
     df.ta.ema(length=50, append=True)
+    df.ta.ema(length=100, append=True)
     df.ta.rsi(length=14, append=True)
-    df.ta.adx(length=14, append=True)
+    df.ta.rsi(length=6, append=True)
     df.ta.atr(length=14, append=True)
+    df.ta.adx(length=14, append=True)
+    df.ta.mfi(length=14, append=True)
     
-    df['RSI_Lag1'] = df['RSI_14'].shift(1)
-    df['Returns_Lag1'] = df['Returns'].shift(1)
-    df['Returns_Lag2'] = df['Returns'].shift(2)
+    try: df.ta.stoch(k=14, d=3, append=True)
+    except: pass
     
-    df['Hour_Sin'] = np.sin(2 * np.pi * df['datetime'].dt.hour / 24)
-    df['Hour_Cos'] = np.cos(2 * np.pi * df['datetime'].dt.hour / 24)
-    
-    df['Volatility'] = (df['high'] - df['low']) / df['close']
-    df['EMA_Diff'] = (df.get('EMA_20', df['close']) - df.get('EMA_50', df['close']))
-    
-    # Target 
-    df['Target'] = (df['close'].shift(-3) > df['close']).astype(int)
-    
-    df = df.dropna().reset_index(drop=True)
-    return df
+    try: df.ta.supertrend(length=10, multiplier=3.0, append=True)
+    except: pass
 
-# ==========================================
-# 🧠 اجرای آموزش
-# ==========================================
-if __name__ == "__main__":
-    
-    print("🚀 Starting Advanced Training (With Lag & Time Features)...")
-    
-    all_data = []
-    for sym in SYMBOLS:
-        raw = download_td(sym)
-        clean = process_data(raw)
-        if not clean.empty: all_data.append(clean)
-        time.sleep(1) 
-    
-    if not all_data: exit("❌ No Data available. Check API key or connection.")
-    df_full = pd.concat(all_data).sort_values('datetime').reset_index(drop=True)
-    
-    features = [
-        'RSI_14', 'RSI_Lag1', 'ADX_14', 'EMA_Diff', 
-        'Returns', 'Returns_Lag1', 'Volatility', 
-        'ATRr_14', 'Hour_Sin', 'Hour_Cos'       
+    stoch_k_col = next((c for c in df.columns if 'STOCHk' in c), None)
+    supertd_col = next((c for c in df.columns if 'SUPERTd' in c), None)
+
+    df['STOCH_K'] = df[stoch_k_col] if stoch_k_col else 50.0
+    df['SUPERT_D'] = df[supertd_col] if supertd_col else 1.0
+
+    df['Volatility'] = df['high'] - df['low']
+    df['Hour'] = df['datetime'].dt.hour
+    df['DayOfWeek'] = df['datetime'].dt.dayofweek
+    df['HV_20'] = df['Returns'].rolling(20).std()
+
+    ema20 = df.get('EMA_20', df['close'])
+    ema50 = df.get('EMA_50', df['close'])
+    ema100 = df.get('EMA_100', df['close'])
+
+    df['EMA_Diff_Fast'] = ema20 - ema50
+    df['EMA_Diff_Slow'] = ema50 - ema100
+
+    # Target: 5 کندل بعد
+    df['Target'] = (df['close'].shift(-5) > df['close']).astype(int)
+
+    feature_cols = [
+        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
+        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
+        'MFI_14', 'STOCH_K', 'SUPERT_D'
     ]
-            
-    X = df_full[features].values
-    y = df_full['Target'].values
-    
-    print(f"📊 Total Samples: {len(X)}")
 
-    # Time Series Split (70% Train, 15% Val, 15% Test)
-    train_size = int(len(X) * 0.70) 
-    val_size = int(len(X) * 0.15)  
-    
-    X_train, y_train = X[:train_size], y[:train_size]
-    X_val, y_val = X[train_size:train_size+val_size], y[train_size:train_size+val_size]
-    X_test, y_test = X[train_size+val_size:], y[train_size+val_size:] 
-    
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_val_s = scaler.transform(X_val)
-    X_test_s = scaler.transform(X_test)
-    joblib.dump(scaler, f"{MODEL_DIR}/scaler.pkl")
-    
-    print("🌲 Training Random Forest...")
-    rf = RandomForestClassifier(n_estimators=150, max_depth=10, min_samples_split=5, n_jobs=-1, random_state=42)
-    rf.fit(X_train_s, y_train)
-    joblib.dump(rf, f"{MODEL_DIR}/rf_model.pkl")
-    
-    print("🚀 Training XGBoost...")
-    xgb = XGBClassifier(n_estimators=150, learning_rate=0.03, max_depth=6, eval_metric='logloss', n_jobs=-1)
-    xgb.fit(X_train_s, y_train)
-    joblib.dump(xgb, f"{MODEL_DIR}/xgb_model.pkl")
-
-    rf_val = rf.predict_proba(X_val_s)[:, 1]
-    xgb_val = xgb.predict_proba(X_val_s)[:, 1]
-    meta_input = np.column_stack([rf_val, xgb_val])
-    
-    # LSTM (Optional)
-    if USE_LSTM and len(X_train_s) > TIME_STEPS + 50:
-        print("🧠 Training LSTM...")
-        def create_seq(data, steps=TIME_STEPS):
-            return np.array([data[i-steps:i] for i in range(steps, len(data))])
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0 
+        else:
+            df[col] = df[col].fillna(0.0) 
             
-        X_lstm_train = create_seq(X_train_s)
-        y_lstm_train = y_train[TIME_STEPS:]
+    df_cleaned = df.iloc[:-5].copy()
+    
+    final_cols = feature_cols + ['Target', 'close']
+    df_cleaned = df_cleaned[final_cols]
+    
+    return df_cleaned
+
+# -------------------------
+# آماده‌سازی داده برای LSTM
+# -------------------------
+def create_sequences(X, steps=TIME_STEPS):
+    seqs = []
+    for i in range(len(X)-steps):
+        seqs.append(X[i:i+steps])
+    return np.array(seqs)
+
+# -------------------------
+# بدنه اصلی برنامه
+# -------------------------
+if __name__ == "__main__":
+    all_dfs = []
+    print("🚀 Starting Training Pipeline...")
+
+    for sym in SYMBOLS:
+        df = download_td(sym)
         
-        lstm = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(TIME_STEPS, len(features))),
-            tf.keras.layers.LSTM(50, return_sequences=False),
-            tf.keras.layers.Dropout(0.2),
+        if df.empty:
+            print(f"❌ Skipping {sym} (No Data).")
+            continue
+            
+        print(f"✅ {sym}: Downloaded {len(df)} rows.")
+        df = calculate_indicators_and_target(df)
+        
+        if df.empty:
+            print(f"❌ Skipping {sym} (Data vanished).")
+            continue
+            
+        print(f"✅ {sym}: Data prepared. Rows: {len(df)}")
+        all_dfs.append(df)
+        time.sleep(1.0) 
+
+    if not all_dfs:
+        print("❌ CRITICAL: No usable data collected. Exiting.")
+        raise SystemExit(1)
+
+    df_all = pd.concat(all_dfs, ignore_index=True).sort_values('datetime').reset_index(drop=True)
+    print(f"📊 Total Training Data: {len(df_all)} rows")
+
+    feature_cols = [
+        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
+        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
+        'MFI_14', 'STOCH_K', 'SUPERT_D'
+    ]
+    
+    X = df_all[feature_cols].values
+    y = df_all['Target'].values
+
+    # 🛑 اصلاح Data Leakage: تقسیم‌بندی زمانی (Chronological Split)
+    # 70% Train, 15% Validation (برای متا مدل), 15% Test (ارزیابی نهایی)
+    total_len = len(X)
+    train_size = int(total_len * 0.70)
+    val_size = int(total_len * 0.15)
+    
+    X_train_full, y_train_full = X[:train_size], y[:train_size]
+    X_meta, y_meta = X[train_size:train_size + val_size], y[train_size:train_size + val_size]
+    X_test, y_test = X[train_size + val_size:], y[train_size + val_size:] # داده‌های آینده مطلق
+
+    # نرمال‌سازی
+    scaler = StandardScaler()
+    X_train_full_scaled = scaler.fit_transform(X_train_full)
+    X_meta_scaled = scaler.transform(X_meta)
+    X_test_scaled = scaler.transform(X_test) # نرمال‌سازی داده تست
+    joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
+
+    # 1. آموزش RandomForest
+    print("🌲 Training RandomForest...")
+    rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+    rf.fit(X_train_full_scaled, y_train_full)
+    joblib.dump(rf, os.path.join(MODEL_DIR, "rf_model.pkl"))
+
+    # 2. آموزش XGBoost
+    print("🚀 Training XGBoost...")
+    xgb = XGBClassifier(n_estimators=100, learning_rate=0.05, eval_metric='logloss', n_jobs=-1)
+    xgb.fit(X_train_full_scaled, y_train_full)
+    joblib.dump(xgb, os.path.join(MODEL_DIR, "xgb_model.pkl"))
+
+    # پیش‌بینی روی داده متا (Validation Set)
+    rf_probs = rf.predict_proba(X_meta_scaled)[:,1]
+    xgb_probs = xgb.predict_proba(X_meta_scaled)[:,1]
+    meta_inputs = np.column_stack([rf_probs, xgb_probs])
+    
+    y_meta_aligned = y_meta
+    
+    # 3. آموزش LSTM (اختیاری)
+    if USE_LSTM and len(X_train_full_scaled) > TIME_STEPS + 50:
+        print("🧠 Training LSTM...")
+        X_lstm_train = create_sequences(X_train_full_scaled, TIME_STEPS)
+        y_lstm_train = y_train_full[TIME_STEPS:]
+
+        lstm_model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(TIME_STEPS, len(feature_cols))),
+            tf.keras.layers.LSTM(64, return_sequences=True),
+            tf.keras.layers.LSTM(32),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
-        lstm.compile(optimizer='adam', loss='binary_crossentropy')
-        lstm.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=32, verbose=0)
-        lstm.save(f"{MODEL_DIR}/lstm_model.h5")
-        
-        X_lstm_val = create_seq(X_val_s)
-        lstm_pred_val = lstm.predict(X_lstm_val, verbose=0).flatten()
-        
-        min_len = min(len(meta_input), len(lstm_pred_val))
-        meta_input = np.column_stack([meta_input[-min_len:], lstm_pred_val[-min_len:]])
-        y_val = y_val[-min_len:]
+        lstm_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        lstm_model.fit(X_lstm_train, y_lstm_train, epochs=5, batch_size=64, verbose=0)
+        lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
 
-    # Train Meta Model
-    print("🔗 Training Meta Model...")
-    meta = LogisticRegression()
-    meta.fit(meta_input, y_val)
-    joblib.dump(meta, f"{MODEL_DIR}/meta_model.pkl")
+        # پیش‌بینی LSTM روی متا
+        X_lstm_meta = create_sequences(X_meta_scaled, TIME_STEPS)
+        lstm_probs = lstm_model.predict(X_lstm_meta, verbose=0).reshape(-1)
 
+        # هم‌تراز کردن طول آرایه‌ها (چون LSTM چند داده اول را می‌خورد)
+        min_len = min(len(meta_inputs), len(lstm_probs))
+        
+        meta_inputs = meta_inputs[-min_len:]
+        lstm_probs = lstm_probs[-min_len:]
+        y_meta_aligned = y_meta[-min_len:]
+
+        # آموزش Meta Model با LSTM
+        X_meta_for_meta = np.column_stack([meta_inputs, lstm_probs])
+        
+    else:
+        # آموزش Meta Model بدون LSTM
+        X_meta_for_meta = meta_inputs
+        
+    print(f"🔗 Training Meta Model with {len(X_meta_for_meta)} samples...")
+    meta_model = LogisticRegression()
+    meta_model.fit(X_meta_for_meta, y_meta_aligned)
+    joblib.dump(meta_model, os.path.join(MODEL_DIR, "meta_model.pkl"))
+        
     # ==========================
-    # ⚖️ تست نهایی (The Moment of Truth)
+    # ⚖️ تست نهایی (روی Test Set)
     # ==========================
-    print("\n" + "="*40)
-    print("⚖️  FINAL TEST RESULTS (UNSEEN DATA)")
-    print("="*40)
     
-    rf_test = rf.predict_proba(X_test_s)[:, 1]
-    xgb_test = xgb.predict_proba(X_test_s)[:, 1]
+    # پیش‌بینی مدل‌های پایه روی داده‌های تست
+    rf_test = rf.predict_proba(X_test_scaled)[:, 1]
+    xgb_test = xgb.predict_proba(X_test_scaled)[:, 1]
     final_input = np.column_stack([rf_test, xgb_test])
     
-    if USE_LSTM and len(X_test_s) > TIME_STEPS:
-        X_lstm_test = create_seq(X_test_s)
-        lstm_test = lstm.predict(X_lstm_test, verbose=0).flatten()
+    if USE_LSTM and len(X_test_scaled) > TIME_STEPS and len(X_meta_for_meta[0]) == 3: # چک میکنیم که LSTM آموزش داده شده باشد
+        # پیش‌بینی LSTM روی داده‌های تست
+        X_lstm_test = create_sequences(X_test_scaled, TIME_STEPS)
+        lstm_test = lstm_model.predict(X_lstm_test, verbose=0).flatten()
+        
+        # هم‌تراز کردن طول‌ها برای تست
         min_len_test = min(len(final_input), len(lstm_test))
         final_input = np.column_stack([final_input[-min_len_test:], lstm_test[-min_len_test:]])
-        y_test = y_test[-min_len_test:]
-
-    meta_probs = meta.predict_proba(final_input)[:, 1]
+        y_test = y_test[-min_len_test:] # آپدیت y_test
+    
+    # پیش‌بینی نهایی توسط متا مدل
+    meta_probs = meta_model.predict_proba(final_input)[:, 1]
     y_pred_final = (meta_probs > 0.5).astype(int)
     
     acc = accuracy_score(y_test, y_pred_final)
-    
+
+    print("\n" + "="*40)
+    print("⚖️  FINAL TEST RESULTS (UNSEEN DATA)")
+    print("="*40)
     print(f"🎯 META MODEL ACCURACY: {acc*100:.2f}%")
     print("-" * 30)
     
