@@ -47,9 +47,9 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 USE_LSTM = True # از LSTM استفاده شود
 
 # ==========================================
-# 🔑👇 کلید API خود را دقیقاً در خط زیر قرار دهید 👇🔑
+# 🔑👇 کلید API شما 👇🔑
 # ==========================================
-TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
+TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" # خط ۴۲
 
 # اتصال به کلاینت
 td = None
@@ -62,55 +62,77 @@ else:
     print("⚠️ هشدار: کلید API معتبر نیست.")
 
 # -------------------------
-# تابع دانلود داده (با گارد API و Volume)
+# تابع دانلود داده (اصلاح شده و ضد باگ)
 # -------------------------
 def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
     td_symbol = SYMBOL_MAP.get(symbol_key, symbol_key)
     
     if td is None:
-        print(f"❌ TD API Key is invalid.")
+        print(f"❌ TD API Key is invalid or TD client failed to initialize.")
         return pd.DataFrame()
 
     print(f"⏳ (TD) Downloading {td_symbol}...")
-    # 🛑 گارد API: فقط 5000 کندل درخواست می‌شود
-    output_size = min(days * 24, 5000) 
+    
+    # تنظیم حداکثر خروجی به 4500 برای جلوگیری از خطای مرز 5000 در پلن رایگان
+    output_size = min(days * 24, 4500) 
     
     try:
-        ts = td.time_series(
+        # دریافت داده خام
+        ts_data = td.time_series(
             symbol=td_symbol,
             interval=interval,
             outputsize=output_size,
             timezone="Exchange"
         ).as_json()
         
-        if not ts or len(ts) < 50:
-             print(f"⚠️ Insufficient data for {td_symbol}.")
+        # 1️⃣ بررسی اینکه آیا داده دریافت شده یا پیام خطا است
+        if isinstance(ts_data, dict) and ('code' in ts_data or 'status' in ts_data):
+            # اگر خروجی دیکشنری باشد و دارای code باشد، یعنی ارور سمت سرور است
+            msg = ts_data.get('message', 'Unknown API Error')
+            print(f"⚠️ API Error for {td_symbol}: {msg}")
+            return pd.DataFrame()
+
+        # 2️⃣ بررسی خالی بودن لیست و نوع آن
+        if not ts_data or not isinstance(ts_data, list) or len(ts_data) < 50:
+             print(f"⚠️ Insufficient data for {td_symbol} (Len: {len(ts_data) if isinstance(ts_data, list) else 0}).")
              return pd.DataFrame()
 
-        df = pd.DataFrame(ts)
+        # تبدیل به DataFrame
+        df = pd.DataFrame(ts_data)
+        
+        # کوچک کردن نام ستون‌ها (Open -> open)
         df = df.rename(columns={c: c.lower() for c in df.columns})
 
-        # 🛑 گارد Volume (از فایل شما)
-        if 'volume' not in df.columns:
+        # 3️⃣ بررسی و ساخت ستون‌های حیاتی
+        required_cols = ['open', 'high', 'low', 'close']
+        for col in required_cols:
+            if col not in df.columns:
+                print(f"❌ Critical column '{col}' missing for {td_symbol}.")
+                return pd.DataFrame()
+            # تبدیل به عدد
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # هندل کردن Volume (چون فارکس گاهی volume ندارد)
+        if 'volume' in df.columns:
+            df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0.0)
+        else:
             df['volume'] = 0.0
         
+        # هندل کردن Datetime
         if 'datetime' in df.columns:
             df['datetime'] = pd.to_datetime(df['datetime'])
         else:
+            print(f"❌ Date column missing for {td_symbol}.")
             return pd.DataFrame()
 
-        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            else:
-                df[col] = 0.0 
-
+        # مرتب‌سازی زمانی
         df = df.sort_values('datetime').reset_index(drop=True)
+        
         return df[['datetime','open','high','low','close','volume']]
         
     except Exception as e:
-        print(f"⚠️ Download failed for {td_symbol}. Error: {e}")
+        # چاپ کامل خطا برای دیباگ بهتر
+        print(f"⚠️ Exception in download for {td_symbol}: {e}")
         return pd.DataFrame()
 
 # -------------------------
@@ -172,8 +194,9 @@ def calculate_indicators_and_target(df):
             
     df_cleaned = df.iloc[:-5].copy()
     
+    # اطمینان از وجود ستون 'close'
     final_cols = feature_cols + ['Target', 'close']
-    df_cleaned = df_cleaned[final_cols]
+    df_cleaned = df_cleaned.filter(items=final_cols, axis=1)
     
     return df_cleaned
 
@@ -204,18 +227,18 @@ if __name__ == "__main__":
         df = calculate_indicators_and_target(df)
         
         if df.empty:
-            print(f"❌ Skipping {sym} (Data vanished).")
+            print(f"❌ Skipping {sym} (Data vanished or too short).")
             continue
             
         print(f"✅ {sym}: Data prepared. Rows: {len(df)}")
         all_dfs.append(df)
-        time.sleep(1.0) 
+        time.sleep(1.0) # تأخیر برای جلوگیری از محدودیت نرخ API (Rate Limit)
 
     if not all_dfs:
         print("❌ CRITICAL: No usable data collected. Exiting.")
         raise SystemExit(1)
 
-    df_all = pd.concat(all_dfs, ignore_index=True).sort_values('datetime').reset_index(drop=True)
+    df_all = pd.concat(all_dfs, ignore_index=True).reset_index(drop=True)
     print(f"📊 Total Training Data: {len(df_all)} rows")
 
     feature_cols = [
@@ -284,9 +307,11 @@ if __name__ == "__main__":
         lstm_probs = lstm_model.predict(X_lstm_meta, verbose=0).reshape(-1)
 
         # هم‌تراز کردن طول آرایه‌ها (چون LSTM چند داده اول را می‌خورد)
+        # RF/XGB به اندازه val_size داده دارند. LSTM به اندازه val_size - TIME_STEPS
         min_len = min(len(meta_inputs), len(lstm_probs))
         
-        meta_inputs = meta_inputs[-min_len:]
+        # تنها داده‌هایی که هر سه مدل برایشان پیش‌بینی دارند استفاده می‌شوند
+        meta_inputs = meta_inputs[-min_len:] 
         lstm_probs = lstm_probs[-min_len:]
         y_meta_aligned = y_meta[-min_len:]
 
@@ -311,7 +336,8 @@ if __name__ == "__main__":
     xgb_test = xgb.predict_proba(X_test_scaled)[:, 1]
     final_input = np.column_stack([rf_test, xgb_test])
     
-    if USE_LSTM and len(X_test_scaled) > TIME_STEPS and len(X_meta_for_meta[0]) == 3: # چک میکنیم که LSTM آموزش داده شده باشد
+    # اگر LSTM آموزش دیده بود (یعنی متا مدل سه ورودی دارد)
+    if USE_LSTM and len(X_test_scaled) > TIME_STEPS and len(X_meta_for_meta[0]) == 3: 
         # پیش‌بینی LSTM روی داده‌های تست
         X_lstm_test = create_sequences(X_test_scaled, TIME_STEPS)
         lstm_test = lstm_model.predict(X_lstm_test, verbose=0).flatten()
