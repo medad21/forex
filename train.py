@@ -23,7 +23,7 @@ USE_LSTM = True
 TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" 
 SYMBOL_MAP = {"EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "XAUUSD": "XAU/USD", "BTCUSD": "BTC/USD"}
 SYMBOLS = list(SYMBOL_MAP.keys())
-# 🛑 اصلاح: 200 روز داده 1h تا از حد مجاز 5000 کندل Twelve Data عبور نکند.
+# 🛑 مقدار دهی مجدد برای رفع خطای API: 200 روز داده 1h تا از حد مجاز 5000 کندل عبور نکند.
 TOTAL_DAYS = 200 
 TIME_STEPS = 10
 MODEL_DIR = "models"
@@ -35,17 +35,17 @@ try:
 except: pass
 
 # ==========================================
-# 📥 توابع دانلود و مهندسی ویژگی (Feature Engineering)
-# (بدون تغییر نسبت به نسخه قبلی، با Lag و Time Features)
+# 📥 توابع دانلود و مهندسی ویژگی
 # ==========================================
 def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
     if not td: return pd.DataFrame()
     td_symbol = SYMBOL_MAP.get(symbol_key, symbol_key)
     print(f"⏳ Downloading {td_symbol}...")
     try:
-        # 🛑 اصلاح: outputsize برابر با TOTAL_DAYS * 24 است.
         output_size = days * 24 
-        if output_size > 5000: output_size = 5000 # گارد اضافی
+        if output_size > 5000: 
+            output_size = 5000 
+            print("⚠️ Output size capped at 5000 candles due to API limit.")
         
         ts = td.time_series(
             symbol=td_symbol, 
@@ -57,6 +57,11 @@ def download_td(symbol_key, interval='1h', days=TOTAL_DAYS):
         if not ts or len(ts) < 100: return pd.DataFrame()
         df = pd.DataFrame(ts).rename(columns=str.lower)
         df['datetime'] = pd.to_datetime(df['datetime'])
+        
+        # 🛑 اصلاح نهایی: مطمئن شدن از وجود ستون 'volume' قبل از استفاده
+        if 'volume' not in df.columns:
+             df['volume'] = 0 # اگر حجم نبود، ستون را با صفر پر کن
+             
         for c in ['open','high','low','close','volume']: df[c] = pd.to_numeric(df[c], errors='coerce')
         return df.sort_values('datetime').reset_index(drop=True)
     except Exception as e:
@@ -67,6 +72,7 @@ def process_data(df):
     if len(df) < 100: return pd.DataFrame()
     df = df.copy()
     
+    # Feature Engineering (Lag & Time features)
     df['Returns'] = df['close'].pct_change()
     df['Log_Returns'] = np.log(df['close'] / df['close'].shift(1))
     df.ta.ema(length=20, append=True)
@@ -85,6 +91,7 @@ def process_data(df):
     df['Volatility'] = (df['high'] - df['low']) / df['close']
     df['EMA_Diff'] = (df.get('EMA_20', df['close']) - df.get('EMA_50', df['close']))
     
+    # Target 
     df['Target'] = (df['close'].shift(-3) > df['close']).astype(int)
     
     df = df.dropna().reset_index(drop=True)
@@ -94,6 +101,7 @@ def process_data(df):
 # 🧠 اجرای آموزش
 # ==========================================
 if __name__ == "__main__":
+    
     print("🚀 Starting Advanced Training (With Lag & Time Features)...")
     
     all_data = []
@@ -101,19 +109,15 @@ if __name__ == "__main__":
         raw = download_td(sym)
         clean = process_data(raw)
         if not clean.empty: all_data.append(clean)
-        time.sleep(1)
+        time.sleep(1) 
     
-    if not all_data: exit("❌ No Data available.")
+    if not all_data: exit("❌ No Data available. Check API key or connection.")
     df_full = pd.concat(all_data).sort_values('datetime').reset_index(drop=True)
     
     features = [
-        'RSI_14', 'RSI_Lag1',         
-        'ADX_14', 
-        'EMA_Diff', 
-        'Returns', 'Returns_Lag1',    
-        'Volatility', 
-        'ATRr_14',
-        'Hour_Sin', 'Hour_Cos'       
+        'RSI_14', 'RSI_Lag1', 'ADX_14', 'EMA_Diff', 
+        'Returns', 'Returns_Lag1', 'Volatility', 
+        'ATRr_14', 'Hour_Sin', 'Hour_Cos'       
     ]
             
     X = df_full[features].values
@@ -121,6 +125,7 @@ if __name__ == "__main__":
     
     print(f"📊 Total Samples: {len(X)}")
 
+    # Time Series Split (70% Train, 15% Val, 15% Test)
     train_size = int(len(X) * 0.70) 
     val_size = int(len(X) * 0.15)  
     
@@ -148,7 +153,7 @@ if __name__ == "__main__":
     xgb_val = xgb.predict_proba(X_val_s)[:, 1]
     meta_input = np.column_stack([rf_val, xgb_val])
     
-    # LSTM (اختیاری)
+    # LSTM (Optional)
     if USE_LSTM and len(X_train_s) > TIME_STEPS + 50:
         print("🧠 Training LSTM...")
         def create_seq(data, steps=TIME_STEPS):
@@ -174,14 +179,14 @@ if __name__ == "__main__":
         meta_input = np.column_stack([meta_input[-min_len:], lstm_pred_val[-min_len:]])
         y_val = y_val[-min_len:]
 
-    # آموزش Meta Model
+    # Train Meta Model
     print("🔗 Training Meta Model...")
     meta = LogisticRegression()
     meta.fit(meta_input, y_val)
     joblib.dump(meta, f"{MODEL_DIR}/meta_model.pkl")
 
     # ==========================
-    # ⚖️ تست نهایی
+    # ⚖️ تست نهایی (The Moment of Truth)
     # ==========================
     print("\n" + "="*40)
     print("⚖️  FINAL TEST RESULTS (UNSEEN DATA)")
