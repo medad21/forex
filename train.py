@@ -49,7 +49,7 @@ USE_LSTM = True # از LSTM استفاده شود
 # ==========================================
 # 🔑👇 کلید API شما 👇🔑
 # ==========================================
-TD_API_KEY = "f24a3dec20104e639d1995e42dc4673c" # خط ۴۲
+TD_API_KEY = "df521019db9f44899bfb172fdce6b454" # خط ۴۲
 
 # اتصال به کلاینت
 td = None
@@ -232,7 +232,7 @@ if __name__ == "__main__":
             
         print(f"✅ {sym}: Data prepared. Rows: {len(df)}")
         all_dfs.append(df)
-        time.sleep(1.0) # تأخیر برای جلوگیری از محدودیت نرخ API (Rate Limit)
+        time.sleep(2.0) # تأخیر برای جلوگیری از محدودیت نرخ API (Rate Limit)
 
     if not all_dfs:
         print("❌ CRITICAL: No usable data collected. Exiting.")
