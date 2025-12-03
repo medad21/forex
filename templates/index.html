@@ -227,7 +227,8 @@
                 sl_type: document.getElementById("sl-type").value
             };
 
-            const res = await fetch('/analyze', {
+           // جایگزین کنید
+            const res = await fetch('/api/v1/data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
