@@ -6,19 +6,18 @@ import pandas as pd
 import pandas_ta as ta
 import tensorflow as tf
 from sklearn.preprocessing import RobustScaler
+import database # 🛑 ایمپورت دیتابیس
 
-# ⚠️ کلید خود را اینجا وارد کنید یا در Environment Variable تنظیم کنید
+# ⚠️ کلید خود را اینجا وارد کنید
 API_KEY = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
 MODEL_DIR = "models"
 TIME_STEPS = 10
 
-# نگاشت نمادها برای TwelveData
 SYMBOLS_MAP = {
     "EURUSD": "EUR/USD",
-    "GBPUSD": "GBP/USD",
-    "USDJPY": "USD/JPY", 
     "XAUUSD": "XAU/USD",
-    "BTCUSD": "BTC/USD"
+    "GBPUSD": "GBP/USD",
+    # ... سایر نمادهای شما
 }
 
 class TradingAI:
@@ -28,11 +27,13 @@ class TradingAI:
         self.xgb = joblib.load(f"{MODEL_DIR}/xgb_model.pkl")
         self.meta = joblib.load(f"{MODEL_DIR}/meta_model.pkl")
         self.lstm = tf.keras.models.load_model(f"{MODEL_DIR}/lstm_model.h5")
+        database.init_db() # 🛑 راه‌اندازی دیتابیس در شروع
 
     def get_data(self, symbol, interval="1h"):
-        """دریافت داده از TwelveData و معکوس کردن برای محاسبات"""
+        """دریافت داده زنده از TwelveData، ذخیره در DB و خواندن کامل تاریخچه"""
         td_sym = SYMBOLS_MAP.get(symbol, symbol)
-        url = f"https://api.twelvedata.com/time_series?symbol={td_sym}&interval={interval}&apikey={API_KEY}&outputsize=100"
+        # ⚠️ درخواست کندل‌های بیشتری برای اطمینان از محاسبات اندیکاتورهای طولانی‌تر
+        url = f"https://api.twelvedata.com/time_series?symbol={td_sym}&interval={interval}&apikey={API_KEY}&outputsize=200" 
         
         try:
             r = requests.get(url).json()
@@ -42,30 +43,41 @@ class TradingAI:
             cols = ['open', 'high', 'low', 'close', 'volume']
             for c in cols: df[c] = pd.to_numeric(df[c])
             
-            # معکوس کردن: تبدیل از (جدید->قدیم) به (قدیم->جدید)
-            return df.iloc[::-1].reset_index(drop=True)
+            # معکوس کردن برای اینکه جدیدترین داده در انتها باشد
+            df = df.iloc[::-1].reset_index(drop=True)
+            
+            # 🛑 ذخیره داده‌های دریافتی جدید در دیتابیس
+            database.save_candles(df.copy(), symbol, interval)
+            
+            # 🛑 خواندن تمام تاریخچه از دیتابیس
+            full_df = database.get_all_candles(symbol, interval)
+            
+            return full_df
         except Exception as e:
-            print(e)
+            print(f"DB/API Error: {e}")
             return None
+
+    def create_sequences(self, X, steps=TIME_STEPS):
+        seqs = []
+        if len(X) < steps: return np.array([])
+        for i in range(len(X) - steps + 1): 
+            seqs.append(X[i:i + steps])
+        return np.array(seqs)
 
     def prepare_features(self, df):
         """دقیقاً مشابه train.py"""
-        if len(df) < 30: return None, None
+        # ... همان کد calculate_features از train.py ...
+        if len(df) < 50: return None, None
         df = df.copy()
 
-        # 1. Stationary Features
         df['Log_Ret'] = np.log(df['close'] / df['close'].shift(1))
-        
         df['RSI_Norm'] = df.ta.rsi(length=14) / 100.0
         df['MFI_Norm'] = df.ta.mfi(length=14) / 100.0
-        
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df['Dist_EMA20'] = (df['close'] - df['EMA_20']) / df['EMA_20']
         df['Dist_EMA50'] = (df['close'] - df['EMA_50']) / df['EMA_50']
-        
-        df.ta.atr(length=14, append=True) # برای محاسبه حد سود/ضرر
-        
+        df.ta.atr(length=14, append=True)
         roll_std = df['Log_Ret'].rolling(window=20).std()
         roll_mean = df['Log_Ret'].rolling(window=20).mean()
         df['Vol_ZScore'] = (df['Log_Ret'] - roll_mean) / (roll_std + 1e-8)
@@ -80,7 +92,7 @@ class TradingAI:
 
     def predict(self, symbol):
         df, cols = self.prepare_features(self.get_data(symbol))
-        if df is None: return {"error": "No Data"}
+        if df is None: return {"error": "No Data or API error"}
         
         feats, ctxs = cols
         
@@ -94,17 +106,15 @@ class TradingAI:
         xgb_p = self.xgb.predict_proba(last_row)[:, 1][0]
         
         # 2. LSTM Prediction
-        lstm_seq = np.array([X_scaled[-TIME_STEPS:]])
-        lstm_p = self.lstm.predict(lstm_seq, verbose=0)[0][0]
+        lstm_seq = self.create_sequences(X_scaled)
+        # فقط از آخرین توالی برای پیش‌بینی استفاده کنید
+        lstm_p = self.lstm.predict(lstm_seq[-1].reshape(1, TIME_STEPS, len(feats)), verbose=0)[0][0]
         
         # 3. Context Extraction
-        # RSI و Volatility آخرین کندل
         last_ctx = df[ctxs].iloc[-1].values 
         
         # 4. Meta Prediction [RF, XGB, LSTM, RSI, Vol]
-        meta_in = np.column_stack([
-            [rf_p], [xgb_p], [lstm_p], [last_ctx]
-        ])
+        meta_in = np.column_stack([[rf_p], [xgb_p], [lstm_p], [last_ctx]])
         
         final_prob = self.meta.predict_proba(meta_in)[:, 1][0]
         
@@ -120,9 +130,9 @@ class TradingAI:
             "symbol": symbol,
             "signal": signal,
             "confidence": round(final_prob * 100, 1),
-            "price": price,
-            "sl": round(price - (1.5 * atr), 4),
-            "tp": round(price + (2.0 * atr), 4)
+            "price": round(price, 5),
+            "sl": round(price - (1.5 * atr), 5), # 1.5 ATR حد ضرر
+            "tp": round(price + (2.0 * atr), 5)  # 2.0 ATR حد سود
         }
 
 if __name__ == "__main__":
