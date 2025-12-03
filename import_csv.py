@@ -5,7 +5,10 @@ import database # فرض بر این است که database.py است
 # ⚠️ این دیکشنری را مطابق با فایل‌های CSV که دارید، تنظیم کنید.
 CSV_FILES = {
     "EURUSD": "EURUSD_data.csv",
+    "GBPUSD": "GBPUSD_data.csv",
+    "USDJPY": "USDJPY_data.csv",
     "XAUUSD": "XAUUSD_data.csv",
+    "BTCUSD": "BTCUSD_data.csv"
     # اگر فایل‌های دیگری دارید اینجا اضافه کنید:
     # "GBPUSD": "GBPUSD_data.csv",
     # "BTCUSD": "BTCUSD_data.csv",
