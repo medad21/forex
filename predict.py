@@ -1,156 +1,130 @@
 import os
-import joblib
 import requests
+import joblib
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import tensorflow as tf
+from sklearn.preprocessing import RobustScaler
 
-# تنظیمات
-TIME_STEPS = 10
-MODEL_DIR = "models"
+# ⚠️ کلید خود را اینجا وارد کنید یا در Environment Variable تنظیم کنید
 API_KEY = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
+MODEL_DIR = "models"
+TIME_STEPS = 10
 
-# لیست نمادها باید با فرمت TwelveData باشد (اسلش دارد)
-SYMBOLS_MAPPING = {
+# نگاشت نمادها برای TwelveData
+SYMBOLS_MAP = {
     "EURUSD": "EUR/USD",
     "GBPUSD": "GBP/USD",
-    "USDJPY": "USD/JPY",
+    "USDJPY": "USD/JPY", 
     "XAUUSD": "XAU/USD",
     "BTCUSD": "BTC/USD"
 }
 
-# --- دریافت داده از Twelve Data ---
-def get_live_data(symbol, interval="1h", outputsize=200):
-    """دریافت داده مستقیم از Twelve Data برای همخوانی با داده‌های آموزشی"""
-    td_symbol = SYMBOLS_MAPPING.get(symbol, symbol.replace("=X", ""))
-    
-    url = f"https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&apikey={API_KEY}&outputsize={outputsize}"
-    try:
-        resp = requests.get(url, timeout=10).json()
-        if 'values' not in resp:
-            print(f"⚠️ API Error for {symbol}: {resp.get('message', 'Unknown error')}")
-            return pd.DataFrame()
-
-        df = pd.DataFrame(resp['values'])
-        # تبدیل ستون‌ها به عددی
-        cols = ['open', 'high', 'low', 'close', 'volume']
-        for c in cols:
-            df[c] = pd.to_numeric(df[c])
-        
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        
-        # نکته حیاتی: TwelveData داده‌ها را از جدید به قدیم می‌دهد.
-        # ما برای اندیکاتورها و LSTM نیاز داریم از قدیم به جدید باشد.
-        df = df.iloc[::-1].reset_index(drop=True)
-        
-        return df[['datetime', 'open', 'high', 'low', 'close', 'volume']]
-    except Exception as e:
-        print(f"❌ Connection Error: {e}")
-        return pd.DataFrame()
-
-# --- محاسبات (باید دقیقاً کپی logic فایل train باشد) ---
-def calculate_features(df):
-    if df.empty: return pd.DataFrame()
-    df = df.copy()
-
-    df['Returns'] = df['close'].pct_change()
-    df.ta.ema(length=20, append=True)
-    df.ta.ema(length=50, append=True)
-    df.ta.ema(length=100, append=True)
-    df.ta.rsi(length=14, append=True)
-    df.ta.rsi(length=6, append=True)
-    df.ta.atr(length=14, append=True)
-    df.ta.adx(length=14, append=True)
-    df.ta.mfi(length=14, append=True)
-    try: df.ta.stoch(k=14, d=3, append=True)
-    except: pass
-    try: df.ta.supertrend(length=10, multiplier=3.0, append=True)
-    except: pass
-    
-    df = df.fillna(0)
-
-    stoch_k_col = next((c for c in df.columns if 'STOCHk' in c), None)
-    supertd_col = next((c for c in df.columns if 'SUPERTd' in c), None)
-    df['STOCH_K'] = df[stoch_k_col] if stoch_k_col else 50.0
-    df['SUPERT_D'] = df[supertd_col] if supertd_col else 1.0
-
-    df['Volatility'] = df['high'] - df['low']
-    df['Hour'] = df['datetime'].dt.hour
-    df['DayOfWeek'] = df['datetime'].dt.dayofweek
-    df['HV_20'] = df['Returns'].rolling(20).std().fillna(0)
-
-    ema20 = df.get('EMA_20', df['close'])
-    ema50 = df.get('EMA_50', df['close'])
-    ema100 = df.get('EMA_100', df['close'])
-    df['EMA_Diff_Fast'] = ema20 - ema50
-    df['EMA_Diff_Slow'] = ema50 - ema100
-
-    feature_cols = [
-        'RSI_14', 'RSI_6', 'ADX_14', 'EMA_Diff_Fast', 'EMA_Diff_Slow', 
-        'Returns', 'Volatility', 'Hour', 'DayOfWeek', 'HV_20',
-        'MFI_14', 'STOCH_K', 'SUPERT_D'
-    ]
-    
-    # فقط آخرین ردیف را برنمی‌گردانیم، کل دیتافریم را برای LSTM نیاز داریم
-    return df, feature_cols
-
-def create_lstm_sequence(data_scaled, steps):
-    return np.array([data_scaled[-steps:]])
-
-# --- کلاس Ensemble ---
-class EnsemblePredictor:
+class TradingAI:
     def __init__(self):
-        self.scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
-        self.rf = joblib.load(os.path.join(MODEL_DIR, "rf_model.pkl"))
-        self.xgb = joblib.load(os.path.join(MODEL_DIR, "xgb_model.pkl"))
-        self.meta = joblib.load(os.path.join(MODEL_DIR, "meta_model.pkl"))
-        try:
-            self.lstm = tf.keras.models.load_model(os.path.join(MODEL_DIR, "lstm_model.h5"))
-        except:
-            self.lstm = None
+        self.scaler = joblib.load(f"{MODEL_DIR}/scaler.pkl")
+        self.rf = joblib.load(f"{MODEL_DIR}/rf_model.pkl")
+        self.xgb = joblib.load(f"{MODEL_DIR}/xgb_model.pkl")
+        self.meta = joblib.load(f"{MODEL_DIR}/meta_model.pkl")
+        self.lstm = tf.keras.models.load_model(f"{MODEL_DIR}/lstm_model.h5")
 
-    def predict(self, symbol):
-        df_raw = get_live_data(symbol)
-        if len(df_raw) < 50:
-            print(f"⚠️ Not enough data for {symbol}")
+    def get_data(self, symbol, interval="1h"):
+        """دریافت داده از TwelveData و معکوس کردن برای محاسبات"""
+        td_sym = SYMBOLS_MAP.get(symbol, symbol)
+        url = f"https://api.twelvedata.com/time_series?symbol={td_sym}&interval={interval}&apikey={API_KEY}&outputsize=100"
+        
+        try:
+            r = requests.get(url).json()
+            if 'values' not in r: return None
+            df = pd.DataFrame(r['values'])
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            cols = ['open', 'high', 'low', 'close', 'volume']
+            for c in cols: df[c] = pd.to_numeric(df[c])
+            
+            # معکوس کردن: تبدیل از (جدید->قدیم) به (قدیم->جدید)
+            return df.iloc[::-1].reset_index(drop=True)
+        except Exception as e:
+            print(e)
             return None
 
-        df_proc, feats = calculate_features(df_raw)
-        
-        # گرفتن داده‌های لازم برای مدل
-        X = df_proc[feats].values
-        X_scaled = self.scaler.transform(X)
+    def prepare_features(self, df):
+        """دقیقاً مشابه train.py"""
+        if len(df) < 30: return None, None
+        df = df.copy()
 
-        # آخرین نمونه برای RF/XGB
-        last_sample = X_scaled[-1].reshape(1, -1)
+        # 1. Stationary Features
+        df['Log_Ret'] = np.log(df['close'] / df['close'].shift(1))
         
-        rf_p = self.rf.predict_proba(last_sample)[:, 1][0]
-        xgb_p = self.xgb.predict_proba(last_sample)[:, 1][0]
+        df['RSI_Norm'] = df.ta.rsi(length=14) / 100.0
+        df['MFI_Norm'] = df.ta.mfi(length=14) / 100.0
         
-        meta_input = [rf_p, xgb_p]
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
+        df['Dist_EMA20'] = (df['close'] - df['EMA_20']) / df['EMA_20']
+        df['Dist_EMA50'] = (df['close'] - df['EMA_50']) / df['EMA_50']
+        
+        df.ta.atr(length=14, append=True) # برای محاسبه حد سود/ضرر
+        
+        roll_std = df['Log_Ret'].rolling(window=20).std()
+        roll_mean = df['Log_Ret'].rolling(window=20).mean()
+        df['Vol_ZScore'] = (df['Log_Ret'] - roll_mean) / (roll_std + 1e-8)
+        
+        df = df.dropna()
+        if df.empty: return None, None
 
-        if self.lstm:
-            # توالی زمانی برای LSTM
-            lstm_seq = create_lstm_sequence(X_scaled, TIME_STEPS)
-            lstm_p = self.lstm.predict(lstm_seq, verbose=0)[0][0]
-            meta_input.append(lstm_p)
+        feat_cols = ['Log_Ret', 'Dist_EMA20', 'Dist_EMA50', 'RSI_Norm', 'MFI_Norm', 'Vol_ZScore']
+        context_cols = ['RSI_Norm', 'Vol_ZScore']
+        
+        return df, (feat_cols, context_cols)
 
-        meta_input = np.array([meta_input])
-        final_prob = self.meta.predict_proba(meta_input)[:, 1][0]
+    def predict(self, symbol):
+        df, cols = self.prepare_features(self.get_data(symbol))
+        if df is None: return {"error": "No Data"}
+        
+        feats, ctxs = cols
+        
+        # آخرین داده برای پیش‌بینی
+        X_raw = df[feats].values
+        X_scaled = self.scaler.transform(X_raw)
+        
+        # 1. Base Predictions
+        last_row = X_scaled[-1].reshape(1, -1)
+        rf_p = self.rf.predict_proba(last_row)[:, 1][0]
+        xgb_p = self.xgb.predict_proba(last_row)[:, 1][0]
+        
+        # 2. LSTM Prediction
+        lstm_seq = np.array([X_scaled[-TIME_STEPS:]])
+        lstm_p = self.lstm.predict(lstm_seq, verbose=0)[0][0]
+        
+        # 3. Context Extraction
+        # RSI و Volatility آخرین کندل
+        last_ctx = df[ctxs].iloc[-1].values 
+        
+        # 4. Meta Prediction [RF, XGB, LSTM, RSI, Vol]
+        meta_in = np.column_stack([
+            [rf_p], [xgb_p], [lstm_p], [last_ctx]
+        ])
+        
+        final_prob = self.meta.predict_proba(meta_in)[:, 1][0]
+        
+        # مدیریت سرمایه (ATR Based)
+        atr = df['ATRr_14'].iloc[-1]
+        price = df['close'].iloc[-1]
+        
+        signal = "NEUTRAL"
+        if final_prob > 0.60: signal = "BUY"
+        elif final_prob < 0.40: signal = "SELL" # اگر تارگت فروش هم آموزش داده بودید
         
         return {
             "symbol": symbol,
-            "price": df_raw['close'].iloc[-1],
-            "prob": round(final_prob, 4),
-            "signal": "BUY" if final_prob > 0.6 else ("SELL" if final_prob < 0.4 else "NEUTRAL")
+            "signal": signal,
+            "confidence": round(final_prob * 100, 1),
+            "price": price,
+            "sl": round(price - (1.5 * atr), 4),
+            "tp": round(price + (2.0 * atr), 4)
         }
 
 if __name__ == "__main__":
-    predictor = EnsemblePredictor()
-    print("\n🔍 Live Prediction from TwelveData:")
-    
-    for sym in SYMBOLS_MAPPING.keys():
-        res = predictor.predict(sym)
-        if res:
-            print(f"🔹 {res['symbol']}: {res['signal']} (Score: {res['prob']}) | Price: {res['price']}")
+    bot = TradingAI()
+    print(bot.predict("EURUSD"))
