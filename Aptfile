@@ -1,5 +1,3 @@
-# نصب فایل‌های هدر پایتون برای کامپایل ماژول‌های C
+libpq5
+libpq-dev
 python3-dev
-
-# بسته‌های build-essential برای تضمین ابزارهای کامپایل استاندارد
-build-essential
