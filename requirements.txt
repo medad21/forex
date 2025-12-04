@@ -10,6 +10,8 @@ scikit-learn
 xgboost
 tensorflow-cpu
 yfinance  # ✅ جایگزین twelvedata شد
+pandas-ta
+
 
 
 
