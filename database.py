@@ -30,7 +30,7 @@ if database_url_candidate:
         # 🛑 تفکیک اجباری URL با urlparse برای استخراج اجزای تمیز
         url_parts = urlparse(database_url_candidate)
         
-        # 🛑 ساخت URL تمیز با پروتکل صحیح (postgresql://) از اجزای جدا شده
+        # 🛑 ساخت URL تمیز با پروتکل صحیح (postgresql+psycopg://) از اجزای جدا شده
         raw_url = "postgresql+psycopg://{user}:{password}@{host}:{port}{path}".format(
             user=url_parts.username,
             password=url_parts.password,
@@ -53,7 +53,8 @@ if not raw_url:
     database = os.environ.get("PGDATABASE")
 
     if user and password and host and port and database:
-        raw_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        # 🟢 اصلاح نهایی: تغییر پروتکل به postgresql+psycopg://
+        raw_url = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
         print("✅ PostgreSQL URL constructed from PG* variables (Method 4).")
 
 
@@ -74,6 +75,7 @@ else:
 try:
     engine = create_engine(DB_URL)
 except Exception as e:
+    # اگر این خطا "No module named 'psycopg'" باشد، نیاز به نصب مجدد درایور دارید!
     print(f"❌ Error creating DB engine: {e}. Falling back to SQLite...")
     engine = create_engine("sqlite:///market_data.db")
 
