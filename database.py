@@ -31,7 +31,7 @@ if database_url_candidate:
         url_parts = urlparse(database_url_candidate)
         
         # 🛑 ساخت URL تمیز با پروتکل صحیح (postgresql://) از اجزای جدا شده
-        raw_url = "postgresql://{user}:{password}@{host}:{port}{path}".format(
+        raw_url = "postgresql+psycopg://{user}:{password}@{host}:{port}{path}".format(
             user=url_parts.username,
             password=url_parts.password,
             host=url_parts.hostname,
