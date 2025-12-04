@@ -4,12 +4,12 @@ gunicorn==21.2.0
 psycopg[binary]
 SQLAlchemy==2.0.25
 pandas-ta
-numpy
 pandas==2.2.2
 scikit-learn
 xgboost
 tensorflow-cpu
 yfinance  # ✅ جایگزین twelvedata شد
+
 
 
 
