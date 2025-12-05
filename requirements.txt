@@ -5,21 +5,8 @@ psycopg[binary]
 SQLAlchemy==2.0.25
 pandas-ta
 pandas
+numpy<2.0                <-- ✅ تضمین نسخه قدیمی و پایدار
 scikit-learn
 xgboost
-tensorflow-cpu
-yfinance  # ✅ جایگزین twelvedata شد
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+tensorflow-cpu==2.16.1   <-- ✅ نسخه پایدارتر برای جلوگیری از کرش
+yfinance
