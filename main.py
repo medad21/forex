@@ -17,8 +17,8 @@ from flask import Flask, request, jsonify, render_template
 warnings.filterwarnings('ignore')
 app = Flask(__name__)
 
-API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "f24a3dec20104e639d1995e42dc4673c")
-API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "W1L3K1JN4F77T9KL")
+API_KEY_TWELVEDATA = os.environ.get("TWELVEDATA_API_KEY", "")
+API_KEY_ALPHA = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
 
 RISK_REWARD_ATR = 1.5
 TARGET_PERIODS = 5
